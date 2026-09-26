@@ -35,7 +35,7 @@ jobs:
       matrix:
         language: [go, javascript-typescript]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: 初始化 CodeQL
         uses: github/codeql-action/init@v4

@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: 安装系统依赖
         run: |
@@ -31,14 +31,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
           cache: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: pnpm
@@ -58,7 +58,7 @@ jobs:
         run: go test -tags webkit2_41 -coverprofile=coverage.out ./...
         working-directory: .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: go-coverage
@@ -70,7 +70,7 @@ jobs:
     timeout-minutes: 30
     needs: verify
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: 安装系统依赖
         run: |
@@ -78,14 +78,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
           cache: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: pnpm
@@ -99,7 +99,7 @@ jobs:
         run: make build
 
       - name: 上传二进制
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: go-studio-linux-amd64
           path: build/bin/go-studio
@@ -110,16 +110,16 @@ jobs:
     timeout-minutes: 20
     needs: build-linux
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
 
       - name: 安装 nfpm
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: go-studio-linux-amd64
           path: build/bin
@@ -134,7 +134,7 @@ jobs:
           dpkg-deb -c build/dist/*.deb | grep -q 'go-studio.desktop'
           file build/dist/*.rpm | grep -q 'RPM v3'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: go-studio-linux-packages
           path: build/dist
