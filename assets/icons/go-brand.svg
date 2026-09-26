@@ -1,0 +1,75 @@
+<!--
+  由 scripts/render-icons.py 从 build/branding/gostudio-mark.svg 生成，请勿直接修改。
+  改设计请改主文件后重新运行：python3 scripts/render-icons.py
+-->
+
+<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg" viewBox="14.5 16 264 264">
+  <title>Go Studio</title>
+
+  <g
+    transform="translate(10, 10)"
+    stroke="#000000"
+    stroke-width="5"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+  >
+    <!-- 身体 -->
+    <path
+      d="M 128 16
+         C 210 16, 230 80, 225 180
+         C 220 260, 180 260, 128 260
+         C 76 260, 36 260, 31 180
+         C 26 80, 46 16, 128 16 Z"
+      fill="#5DC9E2"
+    />
+
+    <!-- 耳朵：绘制在身体之后，才能完整露出并保留耳内细节 -->
+    <circle cx="52" cy="62" r="21" fill="#5DC9E2" />
+    <circle cx="204" cy="62" r="21" fill="#5DC9E2" />
+
+    <!-- 耳内部分 -->
+    <circle cx="52" cy="62" r="8" fill="#000000" stroke="none" />
+    <circle cx="204" cy="62" r="8" fill="#000000" stroke="none" />
+
+    <!-- 脚 -->
+    <ellipse cx="70" cy="250" rx="20" ry="10" fill="#FCE4C5" />
+    <ellipse cx="186" cy="250" rx="20" ry="10" fill="#FCE4C5" />
+
+    <!-- 左眼 -->
+    <circle cx="86" cy="80" r="32" fill="#FFFFFF" />
+    <circle cx="78" cy="80" r="11" fill="#000000" stroke="none" />
+    <circle cx="74" cy="76" r="4" fill="#FFFFFF" stroke="none" />
+
+    <!-- 右眼 -->
+    <circle cx="170" cy="80" r="32" fill="#FFFFFF" />
+    <circle cx="162" cy="80" r="11" fill="#000000" stroke="none" />
+    <circle cx="158" cy="76" r="4" fill="#FFFFFF" stroke="none" />
+
+    <!-- 口鼻区域 -->
+    <ellipse cx="128" cy="118" rx="26" ry="18" fill="#FCE4C5" />
+
+    <!-- 鼻子 -->
+    <ellipse cx="128" cy="108" rx="14" ry="8" fill="#000000" stroke="none" />
+
+    <!-- 门牙 -->
+    <path d="M 118 130 Q 118 145 123 145 Q 128 145 128 130 Z" fill="#FFFFFF" />
+    <path d="M 128 130 Q 128 145 133 145 Q 138 145 138 130 Z" fill="#FFFFFF" />
+
+    <!-- 左手臂 -->
+    <path d="M 32 150 Q 10 150 10 168 Q 10 178 22 176 Q 30 174 32 168 Z" fill="#FCE4C5" />
+
+    <!-- 右手臂：握笔姿态 -->
+    <path d="M 224 150 Q 246 150 246 168 Q 246 180 234 178 Q 226 176 224 168 Z" fill="#FCE4C5" />
+
+    <!--
+      触控笔。描边收窄到 2.5：笔尖与笔帽只有几个单位宽，
+      沿用外层 5 单位描边会被黑色完全覆盖。
+    -->
+    <g transform="translate(236, 162) rotate(-35)" stroke-width="2.5">
+      <rect x="-6" y="-60" width="12" height="80" fill="#3498DB" rx="4" />
+      <polygon points="-6,20 6,20 3.5,34 -3.5,34" fill="#BDC3C7" />
+      <polygon points="-3.5,34 3.5,34 0,47" fill="#F1C40F" />
+      <rect x="-4" y="-66" width="8" height="9" fill="#E74C3C" rx="2" />
+    </g>
+  </g>
+</svg>

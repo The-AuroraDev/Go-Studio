@@ -1,0 +1,48 @@
+/*
+ * Icon.module.css — 图标容器：固定尺寸、继承颜色，不加背景与圆角容器。
+ */
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--gs-icon-size, var(--gs-size-icon));
+  height: var(--gs-icon-size, var(--gs-size-icon));
+  color: inherit;
+}
+
+.icon > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentcolor;
+}
+
+.tonePrimary {
+  color: var(--gs-color-text-primary);
+}
+
+.toneSecondary {
+  color: var(--gs-color-text-secondary);
+}
+
+.toneMuted {
+  color: var(--gs-color-text-muted);
+}
+
+.toneAccent {
+  color: var(--gs-color-accent);
+}
+
+.toneSuccess {
+  color: var(--gs-color-success);
+}
+
+.toneWarning {
+  color: var(--gs-color-warning);
+}
+
+.toneError {
+  color: var(--gs-color-error);
+}

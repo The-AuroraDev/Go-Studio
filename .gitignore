@@ -1,2 +1,17 @@
+# AI 私有备忘与本地技能，不纳入版本控制。
 AIdocs/
 .opencode/
+
+# 构建产物
+build/bin/
+build/dist/
+frontend/dist/
+# embed all:frontend/dist 要求目录存在，因此保留占位文件。
+!frontend/dist/.gitkeep
+frontend/node_modules/
+
+# Wails 绑定（frontend/wailsjs）纳入版本控制，保证 make typecheck 可独立运行。
+
+# 本地状态
+*.log
+.DS_Store

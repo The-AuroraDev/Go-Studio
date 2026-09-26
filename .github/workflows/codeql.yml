@@ -1,0 +1,54 @@
+# CodeQL — 对 Go 后端与 TypeScript 前端做静态安全分析。
+# Go 语言无需编译即可分析，因此不受 webkit2gtk 等 cgo 依赖影响。
+
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一 06:00 跑一次 security-and-quality，抓取新增规则发现的历史问题。
+    - cron: '0 22 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+# 同一分支的新推送取消旧运行，避免 PR 上堆积过期报告。
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 初始化 CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # PR 与推送使用 security-extended，周更任务使用 security-and-quality。
+          queries: >-
+            ${{ github.event_name == 'schedule'
+                && 'security-and-quality'
+                || 'security-extended' }}
+          config-file: ./.github/codeql-config.yml
+
+      - name: 执行分析
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: '/language:${{ matrix.language }}'

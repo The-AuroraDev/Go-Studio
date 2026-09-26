@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Go-Studio",
+  "outputfilename": "go-studio",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm run build",
+  "frontend:dev:watcher": "pnpm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "build:tags": "webkit2_41",
+  "info": {
+    "companyName": "29anan29",
+    "productName": "Go Studio",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright (c) 2026 29anan29"
+  },
+  "author": {
+    "name": "29anan29",
+    "email": "anwang13@outlook.com"
+  }
+}

@@ -1,0 +1,28 @@
+# EditorConfig — 项目统一格式规则，编辑器与格式化器共用。
+# 与 .opencode/skills/coding-standards 的要求保持一致：Go 用 tab，其余用 2 空格。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+max_line_length = 100
+
+[*.go]
+indent_style = tab
+indent_size = 8
+
+[Makefile]
+indent_style = tab
+
+[*.{json,yml,yaml,md}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+# Markdown 表格按格式必须单行，不做行宽限制。
+max_line_length = off

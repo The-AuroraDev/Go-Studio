@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Go Studio
+GenericName=Go IDE
+Comment=Minimal, command-palette-first IDE for Go and cloud-native development
+Exec=go-studio
+Icon=go-studio
+Terminal=false
+Categories=Development;IDE;
+Keywords=go;golang;ide;cloud-native;kubernetes;docker;
+StartupNotify=true
