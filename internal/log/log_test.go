@@ -35,6 +35,19 @@ func readRecords(t *testing.T, path string) []map[string]any {
 	return records
 }
 
+// writeFile 在测试目录写入文件，失败时立即终止测试。
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// fixedTime 返回一个固定时刻，保证日志文件名在测试中可预测。
+func fixedTime() time.Time {
+	return time.Date(2026, time.September, 27, 12, 0, 0, 0, time.UTC)
+}
+
 func TestParseLevelAcceptsKnownNames(t *testing.T) {
 	cases := map[string]slog.Level{
 		"debug":   slog.LevelDebug,
@@ -76,9 +89,9 @@ func TestLoggerWritesRecordsToFile(t *testing.T) {
 	logger.Info("app started", "version", "0.1.0")
 	logger.Debug("this is filtered out")
 
-	path := logger.LogFilePath()
+	path := logger.Path()
 	if path == "" {
-		t.Fatal("LogFilePath returned empty string")
+		t.Fatal("Path returned empty string")
 	}
 
 	records := readRecords(t, path)
@@ -107,7 +120,7 @@ func TestLoggerRedactsSensitiveAttributes(t *testing.T) {
 		"author", "29anan29",
 	)
 
-	raw, err := os.ReadFile(logger.LogFilePath())
+	raw, err := os.ReadFile(logger.Path())
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
@@ -117,7 +130,7 @@ func TestLoggerRedactsSensitiveAttributes(t *testing.T) {
 		}
 	}
 
-	record := readRecords(t, logger.LogFilePath())[0]
+	record := readRecords(t, logger.Path())[0]
 	if record["apiKey"] != mask {
 		t.Errorf("apiKey = %v, want %q", record["apiKey"], mask)
 	}
@@ -127,15 +140,31 @@ func TestLoggerRedactsSensitiveAttributes(t *testing.T) {
 	}
 }
 
-func TestNewConsoleRejectsInvalidLevel(t *testing.T) {
-	if _, err := NewConsole("nope"); err == nil {
+func TestNewRejectsInvalidLevel(t *testing.T) {
+	if _, err := New(Options{Dir: t.TempDir(), Level: "nope"}); err == nil {
 		t.Fatal("expected error for invalid level, got nil")
+	}
+}
+
+func TestCloseIsIdempotent(t *testing.T) {
+	logger, err := New(Options{Dir: t.TempDir(), Level: "info"})
+	if err != nil {
+		t.Fatalf("new logger: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+	if got := logger.Path(); got != "" {
+		t.Errorf("Path after close = %q, want empty string", got)
 	}
 }
 
 func TestRotateIfNeededKeepsSmallFile(t *testing.T) {
 	dir := t.TempDir()
-	current := logFilePath(dir, fixedTime())
+	current := LogFilePath(dir, fixedTime())
 	writeFile(t, current, strings.Repeat("x", 2*1024))
 
 	// 上限 1 MB 而文件只有 2 KB，不应触发轮转。
@@ -149,7 +178,7 @@ func TestRotateIfNeededKeepsSmallFile(t *testing.T) {
 
 func TestRotateIfNeededRenamesOversizedFile(t *testing.T) {
 	dir := t.TempDir()
-	current := logFilePath(dir, fixedTime())
+	current := LogFilePath(dir, fixedTime())
 	writeFile(t, current, strings.Repeat("x", 1024*1024+1))
 
 	// 上限 1 MB 而文件写到 1 MB + 1 字节，应被改名并保留 .rotated 标记。
@@ -193,17 +222,4 @@ func TestPruneBackupsKeepsNewestWithinLimit(t *testing.T) {
 	if entries[0].Name() != "go-studio-2026-01-02-010101.rotated.log" {
 		t.Errorf("oldest kept = %q, want the second newest", entries[0].Name())
 	}
-}
-
-// writeFile 在测试目录写入文件，失败时立即终止测试。
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-// fixedTime 返回一个固定时刻，保证日志文件名在测试中可预测。
-func fixedTime() time.Time {
-	return time.Date(2026, time.September, 26, 12, 0, 0, 0, time.UTC)
 }

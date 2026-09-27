@@ -15,12 +15,12 @@ const (
 	// workspaceDirName 是工作区级配置在项目根目录下的子目录名。
 	workspaceDirName = ".go-studio"
 	// configFileName 是用户级与工作区级共用的配置文件名。
-	configFileName = "config.json"
+	configFileName = "config.toml"
 	// logsDirName 是日志输出目录名，位于用户配置目录之下。
 	logsDirName = "logs"
 )
 
-// UserDir 返回用户级配置目录，未创建时返回路径而不创建目录。
+// UserDir 返回用户级配置目录。目录不存在时只返回路径，不创建。
 func UserDir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
@@ -38,7 +38,7 @@ func UserFile() (string, error) {
 	return filepath.Join(dir, configFileName), nil
 }
 
-// LogsDir 返回日志目录，未创建时返回路径而不创建目录。
+// LogsDir 返回日志目录。目录不存在时只返回路径，不创建。
 func LogsDir() (string, error) {
 	dir, err := UserDir()
 	if err != nil {
@@ -58,7 +58,7 @@ func WorkspaceFile(workspaceRoot string) string {
 
 // ensureDir 创建目录及其父目录，已存在时不做任何事。
 func ensureDir(path string) error {
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create dir %s: %w", path, err)
 	}
 	return nil

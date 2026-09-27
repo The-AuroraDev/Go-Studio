@@ -1,4 +1,4 @@
-// log.go — 结构化日志：按级别写入用户配置目录下的 logs/ 并做体积轮转。
+// log.go — 结构化日志：按天切分写入用户配置目录下的 logs/，并做体积轮转。
 // SPDX-License-Identifier: MIT
 
 package log
@@ -6,7 +6,6 @@ package log
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -27,7 +26,7 @@ const (
 
 // Options 描述日志输出位置、级别与轮转策略。
 type Options struct {
-	// Dir 是日志目录，调用方负责确保它位于用户配置目录之下。
+	// Dir 是日志目录。
 	Dir string
 	// Level 是最低输出级别：debug、info、warn 或 error。
 	Level string
@@ -35,8 +34,6 @@ type Options struct {
 	MaxSizeMB int
 	// MaxBackups 是保留的历史日志文件个数。
 	MaxBackups int
-	// Console 为真时额外把日志写到标准错误，便于开发期观察。
-	Console bool
 }
 
 // Logger 封装 slog.Logger，额外负责日志文件句柄的所有权与关闭。
@@ -47,44 +44,33 @@ type Logger struct {
 }
 
 // New 按给定选项创建日志器。目录与轮转失败都会返回错误而不是静默降级，
-// 避免开发者误以为日志已经落盘。
+// 避免误以为日志已经落盘。
 func New(opts Options) (*Logger, error) {
 	level, err := ParseLevel(opts.Level)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(opts.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(opts.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create log dir %s: %w", opts.Dir, err)
 	}
 	if err := RotateIfNeeded(opts.Dir, opts.MaxSizeMB, opts.MaxBackups); err != nil {
 		return nil, err
 	}
 
-	path := logFilePath(opts.Dir, time.Now())
+	path := LogFilePath(opts.Dir, time.Now())
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open log file %s: %w", path, err)
 	}
 
-	var writer io.Writer = file
-	if opts.Console {
-		writer = io.MultiWriter(file, os.Stderr)
-	}
-	handler := newRedactHandler(slog.NewJSONHandler(writer, &slog.HandlerOptions{Level: level}))
-
+	options := &slog.HandlerOptions{Level: level}
+	handler := newRedactHandler(slog.NewJSONHandler(file, options))
 	return &Logger{slog: slog.New(handler), file: file}, nil
 }
 
-// NewConsole 创建只写标准错误的日志器，用于日志目录不可用时的降级，
-// 保证配置或文件系统出错时诊断信息仍然可见。
-func NewConsole(level string) (*Logger, error) {
-	parsed, err := ParseLevel(level)
-	if err != nil {
-		return nil, err
-	}
-	options := &slog.HandlerOptions{Level: parsed}
-	handler := newRedactHandler(slog.NewJSONHandler(os.Stderr, options))
-	return &Logger{slog: slog.New(handler)}, nil
+// NewWriter 返回底层 slog 处理器，便于接入标准库 logger。
+func (l *Logger) NewWriter() *slog.Logger {
+	return l.slog
 }
 
 // ParseLevel 把配置里的级别字面量解析为 slog 级别。
@@ -113,18 +99,18 @@ func (l *Logger) Info(msg string, args ...any) {
 	l.slog.Info(msg, args...)
 }
 
-// Warn 记录可恢复的异常，例如回退到默认配置。
+// Warn 记录可恢复的异常。
 func (l *Logger) Warn(msg string, args ...any) {
 	l.slog.Warn(msg, args...)
 }
 
-// Error 记录失败，需要人工介入。
+// Error 记录需要人工介入的失败。
 func (l *Logger) Error(msg string, args ...any) {
 	l.slog.Error(msg, args...)
 }
 
-// LogFilePath 返回当前生效的日志文件路径，供设置界面与诊断包使用。
-func (l *Logger) LogFilePath() string {
+// Path 返回当前日志文件路径，供诊断与问题反馈使用。
+func (l *Logger) Path() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.file == nil {
@@ -146,6 +132,11 @@ func (l *Logger) Close() error {
 		return fmt.Errorf("close log file: %w", err)
 	}
 	return nil
+}
+
+// LogFilePath 按日期生成当天日志文件的完整路径。
+func LogFilePath(dir string, now time.Time) string {
+	return filepath.Join(dir, filePrefix+now.Format("2006-01-02")+fileSuffix)
 }
 
 // RotateIfNeeded 在当天日志文件超过体积上限时轮转，并裁剪历史备份。
@@ -232,11 +223,6 @@ func pruneBackups(dir string, maxBackups int) error {
 		}
 	}
 	return nil
-}
-
-// logFilePath 按日期生成当天日志文件的完整路径。
-func logFilePath(dir string, now time.Time) string {
-	return filepath.Join(dir, filePrefix+now.Format("2006-01-02")+fileSuffix)
 }
 
 // isDailyLog 判断文件名是否为按天切分的日志，而不是轮转备份。

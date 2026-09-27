@@ -1,14 +1,12 @@
-# Markdown：强制计入语言统计
 *.md linguist-detectable=true
 *.md linguist-documentation=false
 *.md linguist-language=Markdown
 
-# JSON：强制计入语言统计
 *.json linguist-detectable=true
 *.json linguist-language=JSON
 
-# .config.ts：强制识别为 TypeScript 并计入统计
-*.config.ts linguist-language=TypeScript
-*.config.ts linguist-vendored=false
-*.config.ts linguist-generated=false
-*.config.ts linguist-detectable=true
+go.mod linguist-language=Go
+go.mod linguist-detectable=true
+
+go.sum linguist-language=Go
+go.sum linguist-detectable=true

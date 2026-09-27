@@ -32,7 +32,7 @@ func TestIsSensitiveKeyMatchesCredentialNames(t *testing.T) {
 }
 
 func TestIsSensitiveKeyIgnoresHarmlessNames(t *testing.T) {
-	// author 必须保持可见：wails.json 里就有 author 字段，
+	// author 必须保持可见：源码里的作者字段会被日志记录，
 	// 若把 "auth" 收进敏感词表会把无害元数据一起抹掉。
 	harmless := []string{
 		"author",
