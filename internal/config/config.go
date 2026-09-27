@@ -4,70 +4,112 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-)
 
-// 主题取值。前端 theme 模块使用同一组字面量，两端必须保持一致。
-const (
-	ThemeDark   = "dark"
-	ThemeLight  = "light"
-	ThemeSystem = "system"
+	"github.com/BurntSushi/toml"
 )
 
 // 配置文件权限：配置未来可能承载敏感字段，因此只对所有者可读写。
 const configFileMode fs.FileMode = 0o600
 
-// Config 是前端与后端共享的全部持久化设置。字段使用 json tag 作为磁盘格式，
+// Config 是全部持久化设置。字段的 TOML tag 是磁盘格式的一部分，
 // 一旦发布即视为对外契约，改名需要配置迁移。
 type Config struct {
-	// Theme 决定界面配色：dark、light 或 system。
-	Theme string `json:"theme"`
-	// LogLevel 决定日志输出的最低级别：debug、info、warn 或 error。
-	LogLevel string `json:"logLevel"`
+	// General 是与具体子系统无关的通用设置。
+	General General `toml:"general"`
+	// Editor 是编辑器行为设置。
+	Editor Editor `toml:"editor"`
+	// UI 是外观与渲染设置。
+	UI UI `toml:"ui"`
+	// Log 是日志设置。
+	Log Log `toml:"log"`
 }
 
-// defaultJSON 是配置默认值，以 JSON 表达以便与磁盘文件走同一条合并路径。
-const defaultJSON = `{"theme":"system","logLevel":"info"}`
+// General 是通用设置。
+type General struct {
+	// Keymap 指定启动时加载的键位方案名。M3 键位引擎落地前此字段只做透传。
+	Keymap string `toml:"keymap"`
+	// RecentFiles 记录最近打开过的文件路径。
+	RecentFiles []string `toml:"recent_files"`
+	// RecentLimit 是最近文件的保留条数上限。
+	RecentLimit int `toml:"recent_limit"`
+}
+
+// Editor 是编辑器行为设置。
+type Editor struct {
+	// TabWidth 是制表符展开的列数。
+	TabWidth int `toml:"tab_width"`
+	// SoftWrap 为真时长行折行显示而不是横向滚动。
+	SoftWrap bool `toml:"soft_wrap"`
+	// LineNumbers 为真时显示行号槽。
+	LineNumbers bool `toml:"line_numbers"`
+	// RelativeLineNumbers 为真时当前行显示相对行号。
+	RelativeLineNumbers bool `toml:"relative_line_numbers"`
+}
+
+// UI 是外观与渲染设置。
+type UI struct {
+	// Theme 指向配色主题名。
+	Theme string `toml:"theme"`
+	// TrueColor 为真时使用 24 位色，终端不支持时自动降级。
+	TrueColor bool `toml:"true_color"`
+	// BorderStyle 是浮层边框样式名。
+	BorderStyle string `toml:"border_style"`
+}
+
+// Log 是日志设置。
+type Log struct {
+	// Level 是最低输出级别：debug、info、warn 或 error。
+	Level string `toml:"level"`
+	// MaxSizeMB 是单个日志文件的体积上限。
+	MaxSizeMB int `toml:"max_size_mb"`
+	// MaxBackups 是保留的历史日志文件个数。
+	MaxBackups int `toml:"max_backups"`
+}
 
 // Default 返回内置默认配置，用于配置文件缺失或损坏时的回退。
 func Default() Config {
 	var cfg Config
-	if err := json.Unmarshal([]byte(defaultJSON), &cfg); err != nil {
-		// defaultJSON 是编译期常量，解析失败说明代码本身有误。
+	if err := toml.Unmarshal([]byte(defaultTOML), &cfg); err != nil {
+		// defaultTOML 是编译期常量，解析失败说明代码本身有误。
 		panic(fmt.Sprintf("parse builtin default config: %v", err))
 	}
-	return cfg
+	return normalize(cfg)
 }
 
 // Load 按 默认值 < 用户级 < 工作区级 的顺序合并配置，返回最终生效的配置。
 // 文件缺失不算错误；文件存在但内容非法则返回错误，交由调用方决定是否回退。
 func Load(workspaceRoot string) (Config, error) {
-	merged, err := decodeObject([]byte(defaultJSON))
-	if err != nil {
-		return Config{}, err
-	}
+	merged := Default()
 
 	for _, path := range configLayers(workspaceRoot) {
 		if path == "" {
 			continue
 		}
-		layer, err := readObject(path)
+		layer, err := readFile(path)
 		if err != nil {
 			return Config{}, err
 		}
-		merged = mergeObjects(merged, layer)
+		if layer == nil {
+			continue
+		}
+		merged = merge(merged, *layer)
 	}
+	return normalize(merged), nil
+}
 
-	var cfg Config
-	if err := json.Unmarshal(mustMarshal(merged), &cfg); err != nil {
-		return Config{}, fmt.Errorf("decode merged config: %w", err)
+// normalize 把解码产生的空切片归一化为 nil。
+// TOML 里的空数组解码后是「非 nil 的空切片」，直接与 nil 比较会永远不等，
+// 归一化之后内存中的配置只有一种形态。
+func normalize(cfg Config) Config {
+	if len(cfg.General.RecentFiles) == 0 {
+		cfg.General.RecentFiles = nil
 	}
-	return cfg, nil
+	return cfg
 }
 
 // Save 原子写入配置：先写同目录临时文件再 rename，避免写入中断产生半截文件。
@@ -79,24 +121,18 @@ func Save(path string, cfg Config) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode config: %w", err)
-	}
-	data = append(data, '\n')
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), configFileName+".*")
+	file, err := os.CreateTemp(filepath.Dir(path), configFileName+".*")
 	if err != nil {
 		return fmt.Errorf("create temp config: %w", err)
 	}
-	tmpName := tmp.Name()
+	tmpName := file.Name()
 	defer os.Remove(tmpName)
 
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write temp config: %w", err)
+	if err := toml.NewEncoder(file).Encode(cfg); err != nil {
+		file.Close()
+		return fmt.Errorf("encode config: %w", err)
 	}
-	if err := tmp.Close(); err != nil {
+	if err := file.Close(); err != nil {
 		return fmt.Errorf("close temp config: %w", err)
 	}
 	if err := os.Chmod(tmpName, configFileMode); err != nil {
@@ -127,8 +163,8 @@ func configLayers(workspaceRoot string) []string {
 	return []string{userFile, WorkspaceFile(workspaceRoot)}
 }
 
-// readObject 读取一个 JSON 对象文件。文件不存在时返回 nil 表示该层无贡献。
-func readObject(path string) (map[string]any, error) {
+// readFile 读取一个配置文件。文件不存在时返回 nil 表示该层无贡献。
+func readFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -136,42 +172,58 @@ func readObject(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
-	return decodeObject(data)
+
+	var cfg Config
+	if _, err := toml.Decode(string(data), &cfg); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	return &cfg, nil
 }
 
-// decodeObject 把一段 JSON 文本解析为对象，null 与非对象都视为空层。
-func decodeObject(data []byte) (map[string]any, error) {
-	var obj map[string]any
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return nil, fmt.Errorf("parse config json: %w", err)
+// merge 逐字段把 overlay 覆盖到 base 上。零值表示「该层没有提到这个字段」，
+// 因此保留 base 的值；这让工作区级配置只需写出要覆盖的字段。
+func merge(base, overlay Config) Config {
+	if overlay.General.Keymap != "" {
+		base.General.Keymap = overlay.General.Keymap
 	}
-	return obj, nil
-}
+	if len(overlay.General.RecentFiles) > 0 {
+		base.General.RecentFiles = overlay.General.RecentFiles
+	}
+	if overlay.General.RecentLimit != 0 {
+		base.General.RecentLimit = overlay.General.RecentLimit
+	}
 
-// mergeObjects 就地合并两个配置对象，overlay 中的值覆盖 base 中的值。
-// 嵌套对象递归合并，这样工作区级只需写出要覆盖的字段。
-func mergeObjects(base, overlay map[string]any) map[string]any {
-	if base == nil {
-		base = map[string]any{}
+	if overlay.Editor.TabWidth != 0 {
+		base.Editor.TabWidth = overlay.Editor.TabWidth
 	}
-	for key, value := range overlay {
-		if nested, ok := value.(map[string]any); ok {
-			if existing, ok := base[key].(map[string]any); ok {
-				base[key] = mergeObjects(existing, nested)
-				continue
-			}
-		}
-		base[key] = value
+	if overlay.Editor.SoftWrap {
+		base.Editor.SoftWrap = true
+	}
+	if overlay.Editor.LineNumbers {
+		base.Editor.LineNumbers = true
+	}
+	if overlay.Editor.RelativeLineNumbers {
+		base.Editor.RelativeLineNumbers = true
+	}
+
+	if overlay.UI.Theme != "" {
+		base.UI.Theme = overlay.UI.Theme
+	}
+	if overlay.UI.TrueColor {
+		base.UI.TrueColor = true
+	}
+	if overlay.UI.BorderStyle != "" {
+		base.UI.BorderStyle = overlay.UI.BorderStyle
+	}
+
+	if overlay.Log.Level != "" {
+		base.Log.Level = overlay.Log.Level
+	}
+	if overlay.Log.MaxSizeMB != 0 {
+		base.Log.MaxSizeMB = overlay.Log.MaxSizeMB
+	}
+	if overlay.Log.MaxBackups != 0 {
+		base.Log.MaxBackups = overlay.Log.MaxBackups
 	}
 	return base
-}
-
-// mustMarshal 只用于序列化刚由 json 解析得到的 map[string]any，
-// 该类型必然可序列化，出错说明出现了程序缺陷。
-func mustMarshal(value any) []byte {
-	data, err := json.Marshal(value)
-	if err != nil {
-		panic(fmt.Sprintf("marshal merged config: %v", err))
-	}
-	return data
 }
