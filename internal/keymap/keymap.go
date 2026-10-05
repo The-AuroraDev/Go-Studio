@@ -126,7 +126,7 @@ func (root *node) insert(binding Binding) error {
 	last := seq[len(seq)-1]
 	leaf, ok := current.children[last]
 	if !ok {
-		leaf = &node{}
+		leaf = &node{children: make(map[string]*node)}
 		current.children[last] = leaf
 	}
 	if leaf.direct != nil {
