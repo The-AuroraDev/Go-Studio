@@ -1,6 +1,9 @@
 // terminal_test.go — 端到端验证：在真实伪终端里启动与退出，终端状态必须完全恢复。
 // SPDX-License-Identifier: MIT
 
+// 本文件用到伪终端与 unix 信号，只能在类 Unix 平台编译。
+//go:build !windows
+
 package main
 
 import (

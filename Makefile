@@ -23,20 +23,28 @@ run: ## 运行（需要真实终端）
 	$(GO) run ./cmd/go-studio
 
 .PHONY: test
-test: ## 运行全部单元测试
-	$(GO) test $(PKG)
+test: ## 运行单元测试（-short 跳过深度档位）
+	$(GO) test -short $(PKG)
+
+.PHONY: test-deep
+test-deep: ## 运行深度属性测试（较慢，如缓冲 10 万次随机编辑）
+	$(GO) test -count=1 -timeout 30m -run Deep $(PKG)
 
 .PHONY: test-race
 test-race: ## 带竞态检测运行测试
-	$(GO) test -race $(PKG)
+	$(GO) test -race -short $(PKG)
 
 .PHONY: cover
 cover: ## 生成覆盖率报告
-	$(GO) test -coverprofile=coverage.out -covermode=atomic $(PKG)
+	$(GO) test -short -coverprofile=coverage.out -covermode=atomic $(PKG)
 	$(GO) tool cover -func=coverage.out | tail -1
 
 .PHONY: bench
-bench: ## 运行基准测试
+bench: ## 冒烟跑一遍全部基准（短 benchtime，用于门禁）
+	$(GO) test -run '^$$' -bench . -benchmem -benchtime 200ms $(PKG)
+
+.PHONY: bench-full
+bench-full: ## 完整基准（默认 benchtime，用于真实性能数字）
 	$(GO) test -run '^$$' -bench . -benchmem $(PKG)
 
 .PHONY: vet
@@ -60,7 +68,7 @@ tidy: ## 整理依赖
 	$(GO) mod tidy
 
 .PHONY: check
-check: fmt-check vet test cover bench ## 提交前的完整门禁
+check: fmt-check vet test cover bench test-race ## 提交前的完整门禁
 
 .PHONY: clean
 clean: ## 清理构建产物

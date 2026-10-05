@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // CursorShape 是文本光标的形状。
@@ -209,8 +211,9 @@ func NormalizeKeystroke(keystroke string) string {
 }
 
 // namedKeys 是无法用可打印字符表示、需要写成 <name> 的按键。
+// 空格不在其中：它是可打印字符，有自己的名字 space。
 var namedKeys = map[string]bool{
-	"<esc>": true, "<enter>": true, "<tab>": true, "<space>": true, "<backspace>": true,
+	"<esc>": true, "<enter>": true, "<tab>": true, "<backspace>": true,
 	"<up>": true, "<down>": true, "<left>": true, "<right>": true,
 	"<home>": true, "<end>": true, "<pgup>": true, "<pgdown>": true,
 	"<delete>": true, "<insert>": true,
@@ -219,6 +222,34 @@ var namedKeys = map[string]bool{
 	"<f11>": true, "<f12>": true,
 	"<left-shift>": true, "<right-shift>": true, "<left-ctrl>": true, "<right-ctrl>": true,
 	"<left-alt>": true, "<right-alt>": true, "<left-super>": true, "<right-super>": true,
+}
+
+// SpaceKey 是空格键的名字。它必须叫 space 而不是 <space>：
+// 空格是编辑器里最高频的输入字符，若与命名键混为一谈，
+// 输入一个空格就会触发绑在它上面的命令。
+const SpaceKey = "space"
+
+// PrintableRune 从按键名里取出它要输入的字符。
+// 键位表里没有绑定的按键，其字符就是用户想输入的内容——
+// 这条规则让「没绑定的键直接插入」成为可能，而不必为每个字符建绑定。
+//
+// 带修饰键的按键返回 false：那是快捷键，不该往文档里插字符。
+func PrintableRune(keystroke string) (rune, bool) {
+	if keystroke == SpaceKey {
+		return ' ', true
+	}
+	if keystroke == "" {
+		return 0, false
+	}
+	// 命名键与带修饰键的组合键都不是字符输入。
+	if IsNamedKey(keystroke) || strings.Contains(keystroke, "+") {
+		return 0, false
+	}
+	r, size := utf8.DecodeRuneInString(keystroke)
+	if size != len(keystroke) || r == utf8.RuneError || !unicode.IsPrint(r) {
+		return 0, false
+	}
+	return r, true
 }
 
 // isNamedKey 判断一个按键名是否已经是 <name> 形式。

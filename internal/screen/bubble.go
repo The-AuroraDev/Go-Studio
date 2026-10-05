@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -18,6 +21,10 @@ import (
 
 // 默认帧率。渲染器用变更检测跳过相同帧，因此这个值只是写入频率的上限。
 const defaultFPS = 60
+
+// gracefulShutdownTimeout 是等待底层事件循环收尾的上限。
+// 超过它就放弃等待并让调用方继续退出：卡住的 TUI 比未完全恢复的终端更糟。
+const gracefulShutdownTimeout = 2 * time.Second
 
 // BubbleOptions 是 Bubble Tea 后端的启动选项。
 type BubbleOptions struct {
@@ -41,12 +48,56 @@ type bubbleScreen struct {
 	program *tea.Program
 	events  chan Event
 
+	// tty 是启动前的终端设置快照。恢复终端不能只依赖 Bubble Tea 的收尾：
+	// 那个收尾在超时后会被放弃，而终端残留脏状态是最糟的失败模式。
+	tty *ttyState
+
 	mu           sync.Mutex
 	caps         Caps
 	frame        string
 	cursor       *CursorSpec
 	redrawQueued bool
 	closed       bool
+	ttyErr       error
+}
+
+// ttyState 保存终端的 termios 设置。
+// termios 与读写方式由 build-tagged 的 tty_unix.go / tty_windows.go 提供。
+type ttyState struct {
+	fd  int
+	sys termios
+}
+
+// captureTTYState 读取 fd 所指终端的当前设置。fd 不是终端时返回 nil。
+func captureTTYState(f *os.File) *ttyState {
+	if f == nil {
+		return nil
+	}
+	state, err := getTermios(int(f.Fd()))
+	if err != nil {
+		return nil
+	}
+	return &ttyState{fd: int(f.Fd()), sys: state}
+}
+
+// restore 把设置写回终端。
+//
+// 用 TCSETS 而非 TCSANOW：后者会等输出排空，一旦输出被阻塞就会挂住，
+// 而卡住的退出比少写几个转义序列更糟。重复调用是安全的。
+func (t *ttyState) restore() error {
+	if t == nil {
+		return nil
+	}
+	return setTermios(t.fd, t.sys)
+}
+
+// restoreTTY 幂等地恢复终端设置。
+func (s *bubbleScreen) restoreTTY() {
+	if err := s.tty.restore(); err != nil {
+		s.mu.Lock()
+		s.ttyErr = err
+		s.mu.Unlock()
+	}
 }
 
 // NewBubble 启动 Bubble Tea 后端并返回 Screen。
@@ -79,6 +130,13 @@ func NewBubble(opts BubbleOptions) (Screen, error) {
 		fps = defaultFPS
 	}
 
+	// 在 Bubble Tea 动终端之前先留一份快照。
+	tty := captureTTYState(output)
+	if tty == nil && isTerminal(output) {
+		return nil, fmt.Errorf("screen: 无法读取终端设置，拒绝在无法恢复的前提下启动")
+	}
+	s.tty = tty
+
 	s.program = tea.NewProgram(s,
 		tea.WithContext(ctx),
 		tea.WithOutput(output),
@@ -88,10 +146,21 @@ func NewBubble(opts BubbleOptions) (Screen, error) {
 
 	go func() {
 		// Run 返回后终端已被 Bubble Tea 恢复，此时关闭事件通道让调用方收尾。
+		// 这里再恢复一次是兜底：万一事件循环 panic，Close 未必会被执行。
+		defer s.restoreTTY()
 		_, _ = s.program.Run()
 		close(s.events)
 	}()
 	return s, nil
+}
+
+// isTerminal 报告 f 是否指向终端。
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	_, err := getTermios(int(f.Fd()))
+	return err == nil
 }
 
 // colorDepthOf 把色彩档位映射成可用色数。
@@ -276,7 +345,15 @@ func (s *bubbleScreen) Events() <-chan Event {
 	return s.events
 }
 
-// Close 停止程序并等待终端恢复。
+// Close 停止程序并恢复终端。
+//
+// 等待事件循环收尾是有界的：Bubble Tea 在极端情况下（例如渲染器或输入读循环
+// 没能正常收尾）可能不返回，此时程序绝不能跟着卡死，否则用户的 shell 提示符
+// 永远回不来。
+//
+// 但终端设置由我们自己无条件恢复，不挂在超时分支上——超时只影响"等多久"，
+// 绝不能影响"是否恢复"。Bubble Tea 正常收尾时它也会恢复，这里再恢复一次，
+// 因为写回同一份快照是幂等的。
 func (s *bubbleScreen) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -287,10 +364,31 @@ func (s *bubbleScreen) Close() error {
 	s.mu.Unlock()
 
 	s.program.Quit()
-	// 等事件循环真正结束，确保终端状态已恢复后再返回。
-	for range s.events {
+
+	stopped := make(chan struct{})
+	go func() {
+		// events 由 Run 所在 goroutine 在返回后关闭，这里等它即等 Run 结束。
+		for range s.events {
+		}
+		close(stopped)
+	}()
+
+	var waitErr error
+	select {
+	case <-stopped:
+	case <-time.After(gracefulShutdownTimeout):
+		waitErr = fmt.Errorf("screen: 终端未在 %v 内恢复，已强制返回", gracefulShutdownTimeout)
 	}
-	return nil
+
+	s.restoreTTY()
+
+	s.mu.Lock()
+	restoreErr := s.ttyErr
+	s.mu.Unlock()
+	if restoreErr != nil {
+		return fmt.Errorf("screen: 恢复终端设置失败: %w", restoreErr)
+	}
+	return waitErr
 }
 
 // emit 把事件送入通道。通道满时丢弃该事件而不是阻塞：
@@ -312,7 +410,6 @@ var specialKeyNames = map[string]string{
 	"backspace":  "<backspace>",
 	"esc":        "<esc>",
 	"escape":     "<esc>",
-	"space":      "<space>",
 	"up":         "<up>",
 	"down":       "<down>",
 	"left":       "<left>",
@@ -350,6 +447,16 @@ var functionKeyNames = func() map[string]string {
 // toKeystroke 把 Bubble Tea 的按键翻译成键位引擎使用的名字。
 // 修饰键保持 Bubble Tea 的固定顺序，可打印字符原样保留。
 func toKeystroke(key tea.Key) string {
+	// 可打印字符直接用字符本身当键名。编辑器靠这一点区分「输入字母 a」
+	// 与「按下 ctrl+a」——两者在 Bubble Tea 里只差一个 Mod 位。
+	//
+	// shift 必须在这一步消化掉：终端不会把 A 当成一个独立的上档字母上报，
+	// 大写字母是以 Code='a' + Mod=shift + Text="A" 的形式到达的，
+	// 真正的字符只存在于 Text 里。不取 Text 的话，每次按 Shift 都会丢字符。
+	if text, ok := printableText(key); ok {
+		return text
+	}
+
 	keystroke := key.Keystroke()
 	if keystroke == "" {
 		return ""
@@ -366,6 +473,29 @@ func toKeystroke(key tea.Key) string {
 		return ""
 	}
 	return mods + base
+}
+
+// modMask 是「会让按键变成快捷键」的修饰键集合。
+// shift 不在其中：它不改变字符含义，只影响字符本身的大小写或符号。
+const modMask = tea.ModCtrl | tea.ModAlt | tea.ModMeta | tea.ModSuper | tea.ModHyper
+
+// printableText 判断按键是否代表单个可打印字符，是则返回该字符。
+//
+// 带 ctrl/alt/meta 的按键是快捷键而非输入，一律不算。
+// 空格也不算：它有专门的名字 space，见 specialKeyNames。
+func printableText(key tea.Key) (string, bool) {
+	if key.Text == "" || key.Mod&modMask != 0 {
+		return "", false
+	}
+	// 多字符的文本是输入法组合出的字素簇，交给上层按文本处理。
+	if utf8.RuneCountInString(key.Text) != 1 {
+		return "", false
+	}
+	r, _ := utf8.DecodeRuneInString(key.Text)
+	if r == ' ' || !unicode.IsPrint(r) {
+		return "", false
+	}
+	return key.Text, true
 }
 
 // splitKeystroke 把 "ctrl+alt+a" 拆成修饰键前缀 "ctrl+alt+" 与基键 "a"。

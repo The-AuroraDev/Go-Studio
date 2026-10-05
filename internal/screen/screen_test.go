@@ -1,12 +1,18 @@
 // screen_test.go — Screen 契约、按键归一化与 Bubble Tea 事件翻译的单元测试。
 // SPDX-License-Identifier: MIT
 
+// 本文件用到 unix.TCGETS 与 creack/pty，只能在类 Unix 平台编译。
+//go:build !windows
+
 package screen
 
 import (
+	"os"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 func TestNormalizeKeystrokeSortsModifiers(t *testing.T) {
@@ -188,5 +194,110 @@ func TestToTeaCursorMapsShapes(t *testing.T) {
 	if positioned.X != 5 || positioned.Y != 6 || !positioned.Blink {
 		t.Errorf("toTeaCursor position = (%d,%d) blink=%t, want (5,6) blink=true",
 			positioned.X, positioned.Y, positioned.Blink)
+	}
+}
+
+// TestCaptureTTYStateOnNonTerminal 验证非终端文件不会让启动失败，
+// 也不会产生可用的恢复快照。
+func TestCaptureTTYStateOnNonTerminal(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "notatty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if got := captureTTYState(f); got != nil {
+		t.Errorf("普通文件的 captureTTYState = %v, want nil", got)
+	}
+	if isTerminal(f) {
+		t.Error("普通文件不应被判定为终端")
+	}
+	if captureTTYState(nil) != nil {
+		t.Error("nil 文件的 captureTTYState 应为 nil")
+	}
+}
+
+// TestRestoreTTYStateOnNilIsNoop 验证 nil 快照恢复时不报错，
+// 这是输出被重定向到管道时的正常路径。
+func TestRestoreTTYStateOnNilIsNoop(t *testing.T) {
+	if err := (*ttyState)(nil).restore(); err != nil {
+		t.Errorf("nil 快照恢复应无错，得到 %v", err)
+	}
+}
+
+// TestRestoreTTYStateIsIdempotent 验证重复恢复不会出错，
+// 因为 Bubble Tea 收尾与我们自己的兜底都会写回同一份快照。
+func TestRestoreTTYStateIsIdempotent(t *testing.T) {
+	ptmx, ptty, err := pty.Open()
+	if err != nil {
+		t.Skipf("无法分配伪终端: %v", err)
+	}
+	defer ptmx.Close()
+	defer ptty.Close()
+
+	state := captureTTYState(ptmx)
+	if state == nil {
+		t.Skip("无法读取伪终端设置")
+	}
+
+	// 先改成 raw，模拟程序运行期间的状态。
+	if err := unix.IoctlSetTermios(int(ptmx.Fd()), unix.TCSETS, &unix.Termios{
+		Iflag: unix.IGNBRK, Lflag: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range 3 {
+		if err := state.restore(); err != nil {
+			t.Fatalf("第 %d 次恢复失败: %v", i, err)
+		}
+	}
+
+	got, err := unix.IoctlGetTermios(int(ptmx.Fd()), unix.TCGETS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Lflag != state.sys.Lflag || got.Iflag != state.sys.Iflag {
+		t.Errorf("恢复后与快照不符: got Lflag=%#x Iflag=%#x, want Lflag=%#x Iflag=%#x",
+			got.Lflag, got.Iflag, state.sys.Lflag, state.sys.Iflag)
+	}
+}
+
+// TestRestoreRecoversTerminalLeftInRawMode 直接验证核心承诺：
+// 无论收尾流程如何，restore 都能把留在 raw 模式的终端救回来。
+func TestRestoreRecoversTerminalLeftInRawMode(t *testing.T) {
+	ptmx, ptty, err := pty.Open()
+	if err != nil {
+		t.Skipf("无法分配伪终端: %v", err)
+	}
+	defer ptmx.Close()
+	defer ptty.Close()
+
+	state := captureTTYState(ptmx)
+	if state == nil {
+		t.Skip("无法读取伪终端设置")
+	}
+	original := state.sys.Lflag
+	if original&unix.ECHO == 0 {
+		t.Skip("伪终端默认未开 ECHO，跳过")
+	}
+
+	// 模拟 raw 模式：关掉回显、规范化、信号与扩展处理。
+	if err := unix.IoctlSetTermios(int(ptmx.Fd()), unix.TCSETS, &unix.Termios{
+		Iflag: unix.IGNBRK, Lflag: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := state.restore(); err != nil {
+		t.Fatalf("恢复失败: %v", err)
+	}
+
+	got, err := unix.IoctlGetTermios(int(ptmx.Fd()), unix.TCGETS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Lflag != original {
+		t.Errorf("ECHO 未恢复: Lflag=%#x, want %#x", got.Lflag, original)
 	}
 }
