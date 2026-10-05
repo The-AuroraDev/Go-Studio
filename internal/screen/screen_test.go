@@ -56,12 +56,64 @@ func TestToKeystrokeMapsSpecialKeys(t *testing.T) {
 		{tea.Key{Code: tea.KeyEscape}, "<esc>"},
 		{tea.Key{Code: tea.KeyEnter}, "<enter>"},
 		{tea.Key{Code: tea.KeyTab}, "<tab>"},
-		{tea.Key{Code: tea.KeySpace}, "<space>"},
+		// 空格是可打印字符，不该被当成命名键：否则输入一个空格就会触发
+		// 绑在它上面的命令，编辑器连空格都打不出来。
+		{tea.Key{Code: tea.KeySpace, Text: " "}, "space"},
+		{tea.Key{Code: tea.KeySpace}, "space"},
 		{tea.Key{Code: tea.KeyBackspace}, "<backspace>"},
 		{tea.Key{Code: tea.KeyUp}, "<up>"},
 		{tea.Key{Code: tea.KeyF5}, "<f5>"},
 		{tea.Key{Code: 'a', Text: "a"}, "a"},
 		{tea.Key{Code: 'a', Text: "a", Mod: tea.ModCtrl}, "ctrl+a"},
+		// Ctrl+空格必须与普通空格区分开，否则文件树快捷键一按就变成输入空格。
+		{tea.Key{Code: tea.KeySpace, Mod: tea.ModCtrl}, "ctrl+space"},
+	}
+	for _, tc := range cases {
+		if got := toKeystroke(tc.key); got != tc.want {
+			t.Errorf("toKeystroke(%v) = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}
+
+// TestToKeystrokePreservesTypedCharacter 是文本编辑器的命门：
+// 终端不会把大写字母当成独立的上档键上报，A 是以 Code='a' + shift + Text="A"
+// 的形式到达的。只取 Keystroke() 会把每个大写字母都变成 shift+a，字符本身丢失。
+func TestToKeystrokePreservesTypedCharacter(t *testing.T) {
+	cases := []struct {
+		name string
+		key  tea.Key
+		want string
+	}{
+		{"小写字母", tea.Key{Code: 'a', Text: "a"}, "a"},
+		{"大写字母", tea.Key{Code: 'a', Text: "A", ShiftedCode: 'A', Mod: tea.ModShift}, "A"},
+		{"大写字母不带上档码", tea.Key{Code: 'A', Text: "A", Mod: tea.ModShift}, "A"},
+		{"数字", tea.Key{Code: '1', Text: "1"}, "1"},
+		{"符号", tea.Key{Code: ';', Text: ";"}, ";"},
+		{"中文", tea.Key{Code: '中', Text: "中"}, "中"},
+		{"emoji", tea.Key{Code: '😀', Text: "😀"}, "😀"},
+		{"Shift 加符号", tea.Key{Code: '1', Text: "!", Mod: tea.ModShift}, "!"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toKeystroke(tc.key); got != tc.want {
+				t.Errorf("toKeystroke(%v) = %q, want %q", tc.key, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestToKeystrokeKeepsModifiedKeys 带 ctrl/alt/meta 的按键是快捷键，
+// 必须保留修饰键信息，不能当成字符输入。
+func TestToKeystrokeKeepsModifiedKeys(t *testing.T) {
+	cases := []struct {
+		key  tea.Key
+		want string
+	}{
+		{tea.Key{Code: 'a', Text: "a", Mod: tea.ModCtrl}, "ctrl+a"},
+		{tea.Key{Code: 'a', Text: "a", Mod: tea.ModAlt}, "alt+a"},
+		{tea.Key{Code: 'a', Text: "a", Mod: tea.ModAlt | tea.ModShift}, "alt+shift+a"},
+		{tea.Key{Code: 'a', Text: "a", Mod: tea.ModMeta}, "meta+a"},
+		{tea.Key{Code: '<', Text: "<", Mod: tea.ModCtrl}, "ctrl+<"},
 	}
 	for _, tc := range cases {
 		if got := toKeystroke(tc.key); got != tc.want {
@@ -74,6 +126,58 @@ func TestToKeystrokeKeepsModifiersOnSpecialKeys(t *testing.T) {
 	key := tea.Key{Code: tea.KeyEnter, Mod: tea.ModShift}
 	if got := toKeystroke(key); got != "shift+<enter>" {
 		t.Errorf("toKeystroke = %q, want %q", got, "shift+<enter>")
+	}
+}
+
+func TestPrintableRune(t *testing.T) {
+	cases := []struct {
+		keystroke string
+		want      rune
+		ok        bool
+	}{
+		{"a", 'a', true},
+		{"A", 'A', true},
+		{"1", '1', true},
+		{"中", '中', true},
+		{"😀", '😀', true},
+		{SpaceKey, ' ', true},
+		// 命名键不是字符输入。
+		{"<esc>", 0, false},
+		{"<enter>", 0, false},
+		{"<up>", 0, false},
+		{"<f5>", 0, false},
+		// 带修饰键的是快捷键。
+		{"ctrl+a", 0, false},
+		{"alt+1", 0, false},
+		{"ctrl+space", 0, false},
+		{"meta+t", 0, false},
+		// 空与纯修饰键。
+		{"", 0, false},
+		{"ctrl+", 0, false},
+		{"ctrl+alt", 0, false},
+		// 多字符的文本不是单个字符。
+		{"ab", 0, false},
+		// 不可打印字符。
+		{"\n", 0, false},
+		{"\x01", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := PrintableRune(tc.keystroke)
+		if ok != tc.ok {
+			t.Errorf("PrintableRune(%q) ok = %t, want %t", tc.keystroke, ok, tc.ok)
+			continue
+		}
+		if ok && got != tc.want {
+			t.Errorf("PrintableRune(%q) = %q, want %q", tc.keystroke, got, tc.want)
+		}
+	}
+}
+
+// TestPrintableRuneSpaceIsTypable 固化「空格必须可输入」这条最基本的可用性要求。
+func TestPrintableRuneSpaceIsTypable(t *testing.T) {
+	r, ok := PrintableRune(toKeystroke(tea.Key{Code: tea.KeySpace, Text: " "}))
+	if !ok || r != ' ' {
+		t.Errorf("按空格键得到 (%q, %t), want (' ', true)", r, ok)
 	}
 }
 

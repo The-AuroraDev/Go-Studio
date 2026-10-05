@@ -70,7 +70,7 @@ func TestEmacsTableMatchesSpec(t *testing.T) {
 		{"ctrl+g v", CmdGoVet, ""},
 		{"ctrl+g e", CmdGoEnv, ""},
 		{"ctrl+g l", CmdGoList, ""},
-		{"ctrl+g V", CmdGoVersion, ""},
+		{"ctrl+g shift+v", CmdGoVersion, ""},
 		// spec 写的 C-g-m t / C-g-m d，理解为 C-g 之后按 M-t / M-d。
 		// meta 与 alt 都绑：传统终端把两者一并以 ESC 前缀发送。
 		{"ctrl+g meta+t", CmdGoModTidy, ""},
@@ -106,7 +106,7 @@ func TestEmacsResolvesVimKeyConflict(t *testing.T) {
 		t.Fatalf("Emacs() 返回错误: %v", err)
 	}
 	vet, _ := table.Lookup("ctrl+g v")
-	version, _ := table.Lookup("ctrl+g V")
+	version, _ := table.Lookup("ctrl+g shift+v")
 	if vet.Cmd != CmdGoVet {
 		t.Errorf("C-g v = %q, want %q", vet.Cmd, CmdGoVet)
 	}
@@ -200,7 +200,7 @@ func TestNewRejectsBadTables(t *testing.T) {
 		{
 			name:     "归一化后重复绑定",
 			table:    "t",
-			bindings: []Binding{{Keys: "ctrl+a", Cmd: CmdUndo}, {Keys: "alt+ctrl+a", Cmd: CmdRedo}},
+			bindings: []Binding{{Keys: "alt+ctrl+a", Cmd: CmdUndo}, {Keys: "ctrl+alt+a", Cmd: CmdRedo}},
 			wantErr:  "重复绑定",
 		},
 		{
@@ -241,12 +241,20 @@ func TestNewNormalizesModifierOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() 返回错误: %v", err)
 	}
-	// alt 在 shift 之前，因此反查时必须用归一化后的写法。
-	if _, ok := table.Lookup("alt+shift+<up>"); !ok {
-		t.Error("归一化后的按键序列反查不到")
+	// 存的必须是归一化后的写法：alt 排在 shift 之前。
+	// 否则 Bindings() 的列举结果会随书写顺序变化，键位帮助界面对不上。
+	bindings := table.Bindings()
+	if len(bindings) != 1 {
+		t.Fatalf("绑定数 = %d, want 1", len(bindings))
 	}
-	if _, ok := table.Lookup("shift+alt+<up>"); ok {
-		t.Error("未归一化的按键序列竟然能反查到")
+	if want := "alt+shift+<up>"; bindings[0].Keys != want {
+		t.Errorf("存下的按键序列 = %q, want %q", bindings[0].Keys, want)
+	}
+	// 反查会先归一化输入，两种写法因此都能命中同一个键。
+	for _, seq := range []string{"alt+shift+<up>", "shift+alt+<up>"} {
+		if _, ok := table.Lookup(seq); !ok {
+			t.Errorf("Lookup(%q) 未命中", seq)
+		}
 	}
 }
 

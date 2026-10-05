@@ -32,8 +32,11 @@ func emacsBindings() []Binding {
 		// 注意：传统 xterm 不区分 Ctrl 与 Ctrl+Shift，Ctrl+Shift+C 会以
 		// ctrl+c 的形式到达，因此这两条绑定需要终端支持 kitty 键盘协议。
 		// 表里刻意不绑 ctrl+c，避免在不支持的终端上误触发。
-		{Keys: ctrlPlus + "S c", Cmd: CmdCopy, Help: "复制"},
-		{Keys: ctrlPlus + "S v", Cmd: CmdPaste, Help: "粘贴"},
+		//
+		// 写法必须是 ctrl+shift+c：写成 "ctrl+S c" 会被解析成「ctrl 加字母 S」，
+		// 那是另一个键，永远不会被终端上报成这个序列。
+		{Keys: ctrlPlus + "shift+c", Cmd: CmdCopy, Help: "复制"},
+		{Keys: ctrlPlus + "shift+v", Cmd: CmdPaste, Help: "粘贴"},
 
 		// ---- 文本编辑：多选与列选择（spec 一.1）----
 		//
@@ -70,7 +73,7 @@ func emacsBindings() []Binding {
 		{Keys: ctrlPlus + "a t", Cmd: CmdTerminal, Help: "内置终端"},
 		{Keys: ctrlPlus + "a p", Cmd: CmdCommandPalette, Help: "命令面板"},
 		{Keys: ctrlPlus + "a w", Cmd: CmdSave, Help: "保存"},
-		{Keys: ctrlPlus + "a S", Cmd: CmdSaveAs, Help: "另存为"},
+		{Keys: ctrlPlus + "a shift+s", Cmd: CmdSaveAs, Help: "另存为"},
 		{Keys: ctrlPlus + "a k", Cmd: CmdCloseTab, Help: "关闭标签"},
 		{Keys: ctrlPlus + "a /", Cmd: CmdFindInBuffer, Help: "在文件中查找"},
 		{Keys: ctrlPlus + "a %", Cmd: CmdReplace, Help: "查找并替换"},
@@ -90,8 +93,9 @@ func emacsBindings() []Binding {
 		{Keys: ctrlPlus + "g e", Cmd: CmdGoEnv, Help: "go env"},
 		{Keys: ctrlPlus + "g l", Cmd: CmdGoList, Help: "go list"},
 		// spec 里 go vet 与 go version 都写成 C-g v，二者相撞。
-		// 这里让一次性的 go version 走大写 V，go vet 保留小写 v。
-		{Keys: ctrlPlus + "g V", Cmd: CmdGoVersion, Help: "go version"},
+		// 这里让一次性的 go version 走 Shift+V，go vet 保留小写 v。
+		// 必须写 shift+v 而不是 "V"：后者是「ctrl 加字母 V」，是另一个键。
+		{Keys: ctrlPlus + "g shift+v", Cmd: CmdGoVersion, Help: "go version"},
 		// spec 的「C-g-m t」理解为 C-g 之后按 M-t。同理 M-d。
 		// 传统终端把 Meta 与 Alt 一并以 ESC 前缀发送，kitty 键盘协议才区分得开，
 		// 因此 meta 与 alt 两个写法都绑定到同一条命令。
@@ -100,7 +104,7 @@ func emacsBindings() []Binding {
 		{Keys: ctrlPlus + "g meta+d", Cmd: CmdGoModDownload, Help: "go mod download"},
 		{Keys: ctrlPlus + "g alt+d", Cmd: CmdGoModDownload, Help: "go mod download"},
 		{Keys: ctrlPlus + "g f", Cmd: CmdGoFormatFile, Help: "gofmt 格式化"},
-		{Keys: ctrlPlus + "g R", Cmd: CmdRestartLSP, Help: "重启 gopls"},
+		{Keys: ctrlPlus + "g shift+r", Cmd: CmdRestartLSP, Help: "重启 gopls"},
 
 		// ---- 导航与基础编辑：这些键在 spec 里没写死，用终端自身的按键 ----
 		//
