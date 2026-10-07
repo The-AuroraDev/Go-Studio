@@ -51,9 +51,14 @@ type ptySession struct {
 // newPTYSession 启动 binary 并在后台读取输出。
 // width、height 是伪终端的窗口尺寸；为 0 时程序会继续等待有效尺寸。
 func newPTYSession(t *testing.T, binary string, width, height uint16) *ptySession {
+	return newPTYSessionArgs(t, binary, width, height)
+}
+
+// newPTYSessionArgs 启动 binary 并附带命令行参数，在后台读取输出。
+func newPTYSessionArgs(t *testing.T, binary string, width, height uint16, args ...string) *ptySession {
 	t.Helper()
 
-	cmd := exec.Command(binary)
+	cmd := exec.Command(binary, args...)
 	tty, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: height, Cols: width})
 	if err != nil {
 		t.Skipf("无法分配伪终端（可能缺少 /dev/ptmx）: %v", err)

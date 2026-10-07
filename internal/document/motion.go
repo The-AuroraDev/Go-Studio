@@ -127,6 +127,11 @@ func (d *Document) MoveWordLeft() {
 }
 
 // MoveWordRight 光标右移到下一个词的词首；本行没有下一个词则落到下一行行首。
+//
+// 语义是「下一个词的词首」，与 Vim 的 w 一致：从 "hello world" 的第 0 列
+// 按一次直接到第 6 列（"world" 的词首），而不是 Emacs 的 M-f 那样先走到
+// 当前词末尾（第 5 列）。两者都常见，这里选前者——一条规则、无例外状态，
+// 连按的结果始终落在词首。spec 未规定此行为，这里显式记录以免被误当作 bug。
 func (d *Document) MoveWordRight() {
 	line, col := d.cursor.Line, d.cursor.Col
 	runes := d.lineRunes(line)

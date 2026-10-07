@@ -9,6 +9,16 @@ import (
 	"testing"
 )
 
+// newTestDoc 造一个关闭了输入合并的文档。
+// 生产环境里连续输入会被合并成一次撤销，单测要逐步验证撤销行为，
+// 必须把它关掉，否则两次插入会被并成一条、撤销时一起消失。
+func newTestDoc(content string) *Document {
+	return newDocument("", []byte(content), false, 0)
+}
+
+// saveHere 把文档标记为「当前状态已保存」，用来构造脏标记的基准点。
+func saveHere(d *Document) { d.savedRev = d.rev }
+
 func TestNewIsClean(t *testing.T) {
 	d := New()
 	if d.Dirty() {
@@ -175,14 +185,14 @@ func TestSaveWithoutPathFails(t *testing.T) {
 // TestDirtyIsExact 固化脏标记的精确语义：
 // 撤销回到保存点必须重新变干净——这是用「编辑次数」判断不出来的。
 func TestDirtyIsExact(t *testing.T) {
-	d := New()
+	d := newTestDoc("")
 	if !d.InsertText("hello") {
 		t.Fatal("InsertText 失败")
 	}
 	if !d.Dirty() {
 		t.Fatal("编辑后应有未保存改动")
 	}
-	d.savedRev = d.rev // 相当于在当前状态保存
+	saveHere(d)
 
 	if !d.InsertText(" world") {
 		t.Fatal("InsertText 失败")
@@ -198,8 +208,8 @@ func TestDirtyIsExact(t *testing.T) {
 	if d.Dirty() {
 		t.Error("撤销回到保存点后不应再有未保存改动")
 	}
-	if string(d.Text()) != "hello" {
-		t.Errorf("撤销后内容 = %q, want %q", d.Text(), "hello")
+	if got := string(d.Text()); got != "hello" {
+		t.Errorf("撤销后内容 = %q, want %q", got, "hello")
 	}
 
 	// 重做：再次变脏。
@@ -209,15 +219,18 @@ func TestDirtyIsExact(t *testing.T) {
 	if !d.Dirty() {
 		t.Error("重做后应有未保存改动")
 	}
+	if got := string(d.Text()); got != "hello world" {
+		t.Errorf("重做后内容 = %q, want %q", got, "hello world")
+	}
 }
 
 // TestDirtyStaysDirtyAfterEditUndoEdit 曾是旧实现的 bug：
-// 编辑后撤销、再编辑一次，版本号会撞上保存点的版本号，
+// 编辑后撤销、再编辑一次，历史深度会撞上保存点的深度，
 // 于是内容明明不同却显示「已保存」。
 func TestDirtyStaysDirtyAfterEditUndoEdit(t *testing.T) {
-	d := New()
+	d := newTestDoc("")
 	d.InsertText("a")
-	d.savedRev = d.rev
+	saveHere(d)
 
 	d.InsertText("b")
 	d.Undo()          // 回到 "a"
@@ -228,6 +241,35 @@ func TestDirtyStaysDirtyAfterEditUndoEdit(t *testing.T) {
 	}
 	if got := string(d.Text()); got != "ac" {
 		t.Errorf("内容 = %q, want %q", got, "ac")
+	}
+}
+
+// TestCoalescedEditsAreOneUndoStep 固化合并规则在文档层的表现：
+// 连续输入是一步撤销，但内部版本号仍逐次推进。
+func TestCoalescedEditsAreOneUndoStep(t *testing.T) {
+	d := New() // 生产配置：开着合并
+	for _, r := range "abc" {
+		if !d.InsertRune(r) {
+			t.Fatalf("InsertRune(%q) 失败", r)
+		}
+	}
+	if got := string(d.Text()); got != "abc" {
+		t.Fatalf("内容 = %q, want %q", got, "abc")
+	}
+	if !d.Undo() {
+		t.Fatal("Undo 失败")
+	}
+	if got := string(d.Text()); got != "" {
+		t.Errorf("一次撤销后 = %q, want 空（三次输入合并成一步）", got)
+	}
+	if !d.CanRedo() {
+		t.Error("撤销后应能重做")
+	}
+	if !d.Redo() {
+		t.Fatal("Redo 失败")
+	}
+	if got := string(d.Text()); got != "abc" {
+		t.Errorf("重做后 = %q, want %q", got, "abc")
 	}
 }
 

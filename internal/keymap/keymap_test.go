@@ -6,6 +6,8 @@ package keymap
 import (
 	"strings"
 	"testing"
+
+	"github.com/29anan29/Go-Studio/internal/screen"
 )
 
 func TestEmacsTableBuilds(t *testing.T) {
@@ -347,6 +349,69 @@ func TestResultString(t *testing.T) {
 	for result, want := range cases {
 		if got := result.String(); got != want {
 			t.Errorf("Result(%d).String() = %q, want %q", int(result), got, want)
+		}
+	}
+}
+
+// TestNoPlainLetterIsBound 是本项目最重要的一条键位不变量。
+//
+// 本编辑器没有 Vim 那样的模式切换：没有「普通模式」，字母按下去就是往文档里插字符。
+// 因此任何一个裸字母都不能被绑到命令上——
+// 否则用户打不出包含那个字母的单词，而且症状极其隐蔽：
+// 只有恰好输入到那个字母时才出问题，很容易被当成偶发故障。
+//
+// 这条测试就是防止有人再加回 n / N 这类绑定。
+func TestNoPlainLetterIsBound(t *testing.T) {
+	table, err := Emacs()
+	if err != nil {
+		t.Fatalf("Emacs() 返回错误: %v", err)
+	}
+	for _, binding := range table.Bindings() {
+		keys := strings.Fields(binding.Keys)
+		if len(keys) != 1 {
+			continue // 多键序列不是裸字母
+		}
+		key := keys[0]
+		// 裸字母就是「没有修饰符、没有尖括号」的可打印字符。
+		if screen.IsNamedKey(key) || strings.Contains(key, "+") {
+			continue
+		}
+		t.Errorf("按键 %q（命令 %q）是裸字母，会挡住该字符的输入",
+			binding.Keys, binding.Cmd)
+	}
+}
+
+// TestCommonWordsRemainTypeable 拿真实单词过一遍，确认每个字母都没被占用。
+func TestCommonWordsRemainTypeable(t *testing.T) {
+	words := []string{
+		"n", "N", "function", "return", "if", "else", "for", "range",
+		"import", "package", "struct", "string", "int", "bool", "nil",
+		"func", "var", "const", "type", "go", "defer", "chan", "map",
+		"true", "false", "error", "make", "new", "copy", "len", "cap",
+	}
+	occupied := make(map[string]Command)
+	table, err := Emacs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range table.Bindings() {
+		fields := strings.Fields(binding.Keys)
+		if len(fields) != 1 {
+			continue
+		}
+		key := fields[0]
+		if screen.IsNamedKey(key) || strings.Contains(key, "+") {
+			continue
+		}
+		occupied[key] = binding.Cmd
+	}
+	for _, word := range words {
+		for _, r := range word {
+			ch := string(r)
+			if cmd, taken := occupied[ch]; taken {
+				t.Errorf("字母 %q（出现在 %q 里）被命令 %q 占用，打不出来",
+					ch, word, cmd)
+			}
 		}
 	}
 }

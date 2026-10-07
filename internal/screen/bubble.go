@@ -36,6 +36,11 @@ type BubbleOptions struct {
 	Env []string
 	// Output 是帧的输出目标，默认为 os.Stdout。
 	Output *os.File
+	// Input 是按键的来源，默认为 os.Stdin。
+	//
+	// 暴露它主要是为了可测：单测可以用管道或伪终端当输入，
+	// 从而在不依赖真实终端的情况下驱动整个后端。
+	Input *os.File
 }
 
 // redrawMsg 用于在 Render 之后请求一次重绘。
@@ -137,12 +142,17 @@ func NewBubble(opts BubbleOptions) (Screen, error) {
 	}
 	s.tty = tty
 
-	s.program = tea.NewProgram(s,
+	options := []tea.ProgramOption{
 		tea.WithContext(ctx),
 		tea.WithOutput(output),
 		tea.WithFPS(fps),
 		tea.WithColorProfile(profile),
-	)
+	}
+	// 只有调用方显式给了输入才覆盖，否则保持 Bubble Tea 的默认（os.Stdin）。
+	if opts.Input != nil {
+		options = append(options, tea.WithInput(opts.Input))
+	}
+	s.program = tea.NewProgram(s, options...)
 
 	go func() {
 		// Run 返回后终端已被 Bubble Tea 恢复，此时关闭事件通道让调用方收尾。

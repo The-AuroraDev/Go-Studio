@@ -7,12 +7,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
-	"time"
 
 	"github.com/29anan29/Go-Studio/internal/config"
+	"github.com/29anan29/Go-Studio/internal/document"
+	"github.com/29anan29/Go-Studio/internal/editor"
+	"github.com/29anan29/Go-Studio/internal/keymap"
 	"github.com/29anan29/Go-Studio/internal/log"
 	"github.com/29anan29/Go-Studio/internal/screen"
 )
@@ -125,7 +129,90 @@ func run(args []string) error {
 	}
 	logger.Info("terminal ready", screenBackend.Caps().LogKeyValue()...)
 
-	return appLoop(ctx, screenBackend, logger, cfg, opts.files)
+	return runEditor(ctx, screenBackend, logger, cfg, opts)
+}
+
+// runEditor 装配编辑器并进入主循环。
+//
+// 初始文档的来源：命令行给了文件就打开它，没给就开一个空的未命名文档。
+// 打开失败不是致命错误——一个打不开的文件不该让编辑器整个起不来，
+// 退回到空文档并把原因显示在状态栏上，用户仍然可以编辑别的文件。
+func runEditor(
+	ctx context.Context,
+	backend screen.Screen,
+	logger *log.Logger,
+	cfg config.Config,
+	opts options,
+) error {
+	doc, status := initialDocument(opts.files)
+	table, err := keymap.Lookup(cfg.General.Keymap)
+	if err != nil {
+		// 键位方案不可用必须直接失败：静默退回默认键位会让用户
+		// 按文档里的键却毫无反应，而且极难察觉是配置问题。
+		return fmt.Errorf("键位方案不可用: %w", err)
+	}
+
+	app, err := editor.New(editor.Options{
+		Backend: backend,
+		Logger:  logger,
+		Config:  cfg,
+		Table:   table,
+		Doc:     doc,
+		Status:  status,
+	})
+	if err != nil {
+		return err
+	}
+	return app.Run(ctx)
+}
+
+// initialDocument 按命令行参数决定初始打开哪个文档。
+// 第二个返回值是要显示在状态栏上的说明，出错时也会用到。
+func initialDocument(files []string) (*document.Document, string) {
+	if len(files) == 0 {
+		return document.New(), "C-a f 打开文件，M-1 到 M-8 切换标签"
+	}
+
+	// 多文件参数先只打开第一个：多标签页属于后续阶段，
+	// 与其在这里悄悄丢掉其余文件，不如先明确支持一个。
+	path := files[0]
+	note := ""
+	if len(files) > 1 {
+		note = fmt.Sprintf("已忽略 %d 个额外参数（多标签页尚未支持）", len(files)-1)
+	}
+
+	doc, err := document.Open(path)
+	switch {
+	case err == nil:
+		return doc, withNote(displayPath(path), note)
+
+	case errors.Is(err, fs.ErrNotExist):
+		// 文件还不存在是一个正常场景：用户可能想新建文件。
+		// 必须保留路径，否则保存时无处可写——
+		// 退回无名空文档会让「打开新文件后保存」这条路直接断掉。
+		return document.NewNamed(path, false), withNote(displayPath(path)+"（新建）", note)
+
+	default:
+		// 真的打不开（权限、目录、是二进制文件……）才退回未命名文档。
+		return document.New(), "打开失败：" + err.Error()
+	}
+}
+
+// withNote 在状态说明后面追加备注，没有备注时原样返回。
+func withNote(text, note string) string {
+	if note == "" {
+		return text
+	}
+	return text + "　" + note
+}
+
+// displayPath 返回状态栏上显示用的文件名。
+func displayPath(path string) string {
+	base := path
+	if idx := strings.LastIndexAny(base, "/\\"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	return base
 }
 
 // bootstrap 读取配置并建立日志器。配置损坏时回退到默认值并继续启动。
@@ -172,41 +259,6 @@ func waitForSize(ctx context.Context, backend screen.Screen) bool {
 			if event.Kind == screen.EventResize && event.Width > 0 && event.Height > 0 {
 				return true
 			}
-		}
-	}
-}
-
-// appLoop 是 M0 的占位事件循环：把事件原样记进日志后丢弃。
-// M2 起由编辑器与界面接管。
-func appLoop(
-	ctx context.Context,
-	backend screen.Screen,
-	logger *log.Logger,
-	cfg config.Config,
-	files []string,
-) error {
-	logger.Debug("event loop started", "files", files, "keymap", cfg.General.Keymap)
-
-	// 定期输出心跳，确认事件循环存活且日志在写。
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	events := backend.Events()
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("shutting down")
-			return nil
-
-		case <-ticker.C:
-			logger.Debug("event loop alive")
-
-		case event, ok := <-events:
-			if !ok {
-				logger.Info("terminal closed")
-				return nil
-			}
-			logger.Debug("event", "kind", event.Kind.String(), "keystroke", event.Keystroke)
 		}
 	}
 }

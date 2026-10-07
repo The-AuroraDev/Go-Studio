@@ -7,7 +7,9 @@ package config
 // 改结构体时必须同步改这里，否则测试会失败。
 const defaultTOML = `
 [general]
-keymap = "vim"
+# 键位方案名，对应 internal/keymap 里登记的名字。
+# 目前只实现了 emacs 一套（spec.md 的 C-a / C-S / C-g 前缀风格）。
+keymap = "emacs"
 recent_files = []
 recent_limit = 20
 

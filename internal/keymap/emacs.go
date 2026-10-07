@@ -68,6 +68,9 @@ func emacsBindings() []Binding {
 		{Keys: "alt+7", Cmd: CmdSelectTab, Arg: Arg("7"), Help: "切到第 7 个标签"},
 		{Keys: "alt+8", Cmd: CmdSelectTab, Arg: Arg("8"), Help: "切到第 8 个标签"},
 		{Keys: "alt+9", Cmd: CmdLastTab, Help: "切到最后一个标签"},
+		// 标签之间的相邻移动没有占用 spec 的键位，用两个不与前缀冲突的组合。
+		{Keys: ctrlPlus + "a ]", Cmd: CmdNextTab, Help: "下一个标签"},
+		{Keys: ctrlPlus + "a [", Cmd: CmdPrevTab, Help: "上一个标签"},
 
 		// ---- 编辑器交互（spec 一.3）----
 		{Keys: ctrlPlus + "a t", Cmd: CmdTerminal, Help: "内置终端"},
@@ -75,7 +78,16 @@ func emacsBindings() []Binding {
 		{Keys: ctrlPlus + "a w", Cmd: CmdSave, Help: "保存"},
 		{Keys: ctrlPlus + "a shift+s", Cmd: CmdSaveAs, Help: "另存为"},
 		{Keys: ctrlPlus + "a k", Cmd: CmdCloseTab, Help: "关闭标签"},
+		// 查找：第一次按 C-a / 先问要查什么，之后在匹配间移动。
+		//
+		// 「下一处/上一处」必须绑到组合键上，不能绑裸字母。
+		// 本编辑器没有 Vim 那样的模式切换，字母默认就是往文档里插字符；
+		// 把 n 绑给「下一处匹配」会让人打不出单词里的 n，
+		// 而且症状很隐蔽：只有恰好输入到那个字母时才发现。
+		// C-s / C-r 是 Emacs 的 isearch-forward / isearch-backward。
 		{Keys: ctrlPlus + "a /", Cmd: CmdFindInBuffer, Help: "在文件中查找"},
+		{Keys: ctrlPlus + "s", Cmd: CmdFindNext, Help: "下一处匹配"},
+		{Keys: ctrlPlus + "r", Cmd: CmdFindPrev, Help: "上一处匹配"},
 		{Keys: ctrlPlus + "a %", Cmd: CmdReplace, Help: "查找并替换"},
 		{Keys: ctrlPlus + "a g", Cmd: CmdGotoLine, Help: "跳转到行"},
 		{Keys: ctrlPlus + "a z", Cmd: CmdToggleFold, Help: "折叠/展开"},

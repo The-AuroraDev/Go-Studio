@@ -1,5 +1,7 @@
 # 编译产物
 /go-studio
+# go build ./... 或 go run 留下的本地二进制
+/e2e
 /bin/
 /dist/
 *.test

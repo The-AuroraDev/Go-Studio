@@ -71,12 +71,21 @@ type revPair struct {
 
 // New 造一个没有对应磁盘文件的空文档。
 func New() *Document {
-	return newDocument("", nil, false)
+	return newDocument("", nil, false, coalesceWindow)
+}
+
+// FromString 用给定内容造一个内存文档，路径为空。
+//
+// 输入不是文件路径而是一段现成的文本，主要用于测试与「从剪贴板新建」这类场景。
+// 它保留生产环境的输入合并行为，因此用它的测试看到的撤销粒度与真实编辑器一致。
+// 需要逐步撤销的单测请用包内的 newDocument 显式关闭合并。
+func FromString(content string) *Document {
+	return newDocument("", []byte(content), false, coalesceWindow)
 }
 
 // NewNamed 造一个绑定到路径、但内容为空的文档，用于「新建文件」尚未保存的阶段。
 func NewNamed(path string, readonly bool) *Document {
-	return newDocument(path, nil, readonly)
+	return newDocument(path, nil, readonly, coalesceWindow)
 }
 
 // Open 读取文件并构造文档。
@@ -98,14 +107,16 @@ func Open(path string) (*Document, error) {
 	if isBinary(data) {
 		return nil, fmt.Errorf("document: %s 看起来是二进制文件，拒绝以文本方式打开", path)
 	}
-	return newDocument(path, data, !isWritable(info.Mode())), nil
+	return newDocument(path, data, !isWritable(info.Mode()), coalesceWindow), nil
 }
 
-// newDocument 是三个构造函数共用的装配逻辑。
-func newDocument(path string, data []byte, readonly bool) *Document {
+// newDocument 是各构造函数共用的装配逻辑。
+// coalesce 是连续输入合并成一次撤销的时长，小于等于 0 表示关闭合并：
+// 单测需要每步编辑都是独立的撤销项，否则撤销行为会被合并规则干扰。
+func newDocument(path string, data []byte, readonly bool, coalesce time.Duration) *Document {
 	return &Document{
 		buf:      buffer.New(data),
-		undo:     buffer.NewUndoStack(coalesceWindow),
+		undo:     buffer.NewUndoStack(coalesce),
 		path:     path,
 		readonly: readonly,
 	}
