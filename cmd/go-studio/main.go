@@ -34,8 +34,9 @@ const usage = `Go Studio — 面向 Go 的终端 IDE
   -help           显示本帮助
 `
 
-// version 由构建时通过 -ldflags 注入。
-var version = "0.1.0-dev"
+// version 由构建时通过 -ldflags 注入（见 Makefile 的 build-release）。
+// 手工编译时用的是这个默认值。
+var version = "0.0.1-dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

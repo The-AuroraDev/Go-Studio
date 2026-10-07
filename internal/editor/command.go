@@ -96,6 +96,7 @@ var commands = map[keymap.Command]handler{
 
 	// 会话
 	keymap.CmdQuit:         (*App).quit,
+	keymap.CmdForceQuit:    (*App).forceQuit,
 	keymap.CmdCancelPrefix: (*App).cancelPrefix,
 }
 
@@ -248,8 +249,23 @@ func (a *App) save(_ keymap.Binding) {
 
 func (a *App) quit(_ keymap.Binding) {
 	if a.doc.Dirty() {
-		a.setStatus("有未保存改动，未退出")
+		// 拒绝退出时必须把「接下来怎么办」一起说出来。
+		// 只说「未退出」的话，用户只能反复按 C-a q，
+		// 或者干脆以为编辑器坏了。明确给出保存与强退两个出口。
+		a.setStatus("有未保存改动：C-a w 保存，或 C-a x 强制退出")
 		return
+	}
+	a.shouldQuit = true
+}
+
+// forceQuit 无条件退出，未保存的改动会被丢弃。
+//
+// 它是刻意存在的：有未保存改动时 C-a q 会拒绝，
+// 若不给一条强退路径，用户就只能在「保存」和「被卡住」之间二选一。
+// 危险操作要有，但必须与其他命令一样显式地摆在那里，而不是藏起来。
+func (a *App) forceQuit(_ keymap.Binding) {
+	if a.doc.Dirty() {
+		a.error("editor: force quit with unsaved changes", "path", a.doc.Path())
 	}
 	a.shouldQuit = true
 }
@@ -294,6 +310,12 @@ func (a *App) statusLine() string {
 	if a.doc.Readonly() {
 		name += " [只读]"
 	}
+	// 识别到的语言显示在文件名后面。用户最常问的问题是
+	// 「为什么这份 .conf 没高亮」，答案基本总是「没认出来」，
+	// 把结果直接摆出来比让用户去猜省事。
+	if a.hlLang != "" {
+		name += " " + a.hlLang
+	}
 
 	cursor := a.doc.Cursor()
 	// 状态栏里的行列号从 1 开始，与行号显示保持一致；
@@ -333,6 +355,9 @@ func (a *App) setStatus(text string) {
 func (a *App) theme() view.Theme {
 	if !a.cfg.UI.TrueColor && a.backend != nil && !a.backend.Caps().TrueColor {
 		return view.PlainTheme()
+	}
+	if a.hl != nil {
+		return view.SyntaxTheme()
 	}
 	return view.DefaultTheme()
 }

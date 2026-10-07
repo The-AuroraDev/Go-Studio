@@ -76,7 +76,14 @@ func emacsBindings() []Binding {
 		{Keys: ctrlPlus + "a t", Cmd: CmdTerminal, Help: "内置终端"},
 		{Keys: ctrlPlus + "a p", Cmd: CmdCommandPalette, Help: "命令面板"},
 		{Keys: ctrlPlus + "a w", Cmd: CmdSave, Help: "保存"},
-		{Keys: ctrlPlus + "a shift+s", Cmd: CmdSaveAs, Help: "另存为"},
+		// Shift+字母在大写时，键位表里要写字母本身而不是 shift+字母：
+		// 终端把 Shift 吸收进了字符，toKeystroke 返回的是 "S"，
+		// 永远不会是 "shift+s"。写成后者这条绑定就永远按不出来。
+		{Keys: ctrlPlus + "a S", Cmd: CmdSaveAs, Help: "另存为"},
+		// 退出。有未保存改动时 C-a q 不会真退出，会在状态栏提示；
+		// 确实要走就用 C-a x 强制退出，不给一条「无条件丢弃」的路径。
+		{Keys: ctrlPlus + "a q", Cmd: CmdQuit, Help: "退出（有改动时会拒绝）"},
+		{Keys: ctrlPlus + "a x", Cmd: CmdForceQuit, Help: "强制退出，丢弃未保存改动"},
 		{Keys: ctrlPlus + "a k", Cmd: CmdCloseTab, Help: "关闭标签"},
 		// 查找：第一次按 C-a / 先问要查什么，之后在匹配间移动。
 		//
@@ -106,8 +113,8 @@ func emacsBindings() []Binding {
 		{Keys: ctrlPlus + "g l", Cmd: CmdGoList, Help: "go list"},
 		// spec 里 go vet 与 go version 都写成 C-g v，二者相撞。
 		// 这里让一次性的 go version 走 Shift+V，go vet 保留小写 v。
-		// 必须写 shift+v 而不是 "V"：后者是「ctrl 加字母 V」，是另一个键。
-		{Keys: ctrlPlus + "g shift+v", Cmd: CmdGoVersion, Help: "go version"},
+		// 同另存为：Shift+V 上报的按键名就是 "V"。
+		{Keys: ctrlPlus + "g V", Cmd: CmdGoVersion, Help: "go version"},
 		// spec 的「C-g-m t」理解为 C-g 之后按 M-t。同理 M-d。
 		// 传统终端把 Meta 与 Alt 一并以 ESC 前缀发送，kitty 键盘协议才区分得开，
 		// 因此 meta 与 alt 两个写法都绑定到同一条命令。
@@ -116,7 +123,7 @@ func emacsBindings() []Binding {
 		{Keys: ctrlPlus + "g meta+d", Cmd: CmdGoModDownload, Help: "go mod download"},
 		{Keys: ctrlPlus + "g alt+d", Cmd: CmdGoModDownload, Help: "go mod download"},
 		{Keys: ctrlPlus + "g f", Cmd: CmdGoFormatFile, Help: "gofmt 格式化"},
-		{Keys: ctrlPlus + "g shift+r", Cmd: CmdRestartLSP, Help: "重启 gopls"},
+		{Keys: ctrlPlus + "g R", Cmd: CmdRestartLSP, Help: "重启 gopls"},
 
 		// ---- 导航与基础编辑：这些键在 spec 里没写死，用终端自身的按键 ----
 		//

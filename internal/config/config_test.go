@@ -108,9 +108,16 @@ func TestSaveThenLoadRoundTrip(t *testing.T) {
 
 	want := Config{
 		General: General{Keymap: "emacs", RecentLimit: 5},
-		Editor:  Editor{TabWidth: 2, SoftWrap: true, LineNumbers: true},
-		UI:      UI{Theme: "custom", TrueColor: true, BorderStyle: "thick"},
-		Log:     Log{Level: "debug", MaxSizeMB: 16, MaxBackups: 3},
+		Editor: Editor{
+			TabWidth:            2,
+			SoftWrap:            true,
+			LineNumbers:         true,
+			Syntax:              true,
+			SyntaxLang:          "Go",
+			RelativeLineNumbers: false,
+		},
+		UI:  UI{Theme: "custom", TrueColor: true, BorderStyle: "thick"},
+		Log: Log{Level: "debug", MaxSizeMB: 16, MaxBackups: 3},
 	}
 	if err := SaveUser(want); err != nil {
 		t.Fatalf("save: %v", err)

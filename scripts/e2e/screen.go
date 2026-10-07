@@ -6,6 +6,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -21,12 +22,19 @@ import (
 type virtualScreen struct {
 	width, height int
 	cells         [][]rune
-	row, col      int
+	// fg 是每个单元格写下时的前景色（SGR 原文），空串表示终端默认色。
+	// 光看字符无法验证语法高亮：关键字和普通标识符的字符完全一样，
+	// 区别只在颜色上。
+	fg       [][]string
+	row, col int
 	// last 是最近一个被写进屏幕的字符，供 REP 序列复用。
 	last rune
 	// scrollTop、scrollBottom 是滚动区域（DECSTBM），闭区间，0 基。
 	// 整屏滚动时它们分别是 0 与 height-1。
 	scrollTop, scrollBottom int
+
+	// curFG 是当前生效的前景色。
+	curFG string
 }
 
 // newVirtualScreen 造一张全空屏幕。
@@ -48,6 +56,13 @@ func (s *virtualScreen) clear() {
 	for r := range s.cells {
 		s.cells[r] = blankRow(s.width)
 	}
+	// 颜色网格必须和字符网格一起重建，尺寸也必须一致：
+	// put 里会同时写两处，少建一处就是越界 panic。
+	s.fg = make([][]string, s.height)
+	for r := range s.fg {
+		s.fg[r] = make([]string, s.width)
+	}
+	s.curFG = ""
 	s.row, s.col = 0, 0
 	s.last = 0
 	s.scrollTop, s.scrollBottom = 0, maxInt(s.height-1, 0)
@@ -152,6 +167,8 @@ func (s *virtualScreen) applyCSI(params string, final rune) {
 	nums := parseParams(params)
 
 	switch final {
+	case 'm': // SGR：只跟踪前景色，其余属性不参与断言
+		s.applySGR(params)
 	case 'H', 'f': // 光标绝对定位（行列均从 1 开始）
 		row, col := 1, 1
 		if len(nums) > 0 && nums[0] > 0 {
@@ -341,11 +358,102 @@ func (s *virtualScreen) lineFeed() {
 // 渲染器写满一行后会显式发 CRLF 或重新定位光标。
 // 若在这里折行，写满 100 列的行会先折一次、随后 CRLF 又换一次，
 // 整屏就会一行一行往上错位。
+// applySGR 更新当前前景色。
+//
+// 不能整条序列原样记下来：渲染库会把颜色和其它属性合并成一条序列
+// （实测有 "\x1b[38;5;176;27m" 这种，27 是「取消反显」），
+// 原样比对就永远对不上 view 包里的配色值。
+// 所以统一走 normalizeFG 只取前景色那部分。
+func (s *virtualScreen) applySGR(params string) {
+	s.curFG = normalizeFG(params)
+}
+
+// normalizeFG 从 SGR 里取出前景色，规范化成 "\x1b[38;5;Nm"。
+// 没有前景色（含复位与 39 默认色）时返回空串。
+//
+// 入参可以是裸参数（"38;5;176"），也可以是完整序列（"\x1b[38;5;176m"）：
+// 调用方手里两种形式都有，硬要它们先剥壳只会让每个调用点各写一遍。
+func normalizeFG(params string) string {
+	params = strings.TrimSuffix(strings.TrimPrefix(params, "\x1b["), "m")
+	nums := parseParams(params)
+	for i := 0; i < len(nums); i++ {
+		switch nums[i] {
+		case 38:
+			// 38;5;N 是 256 色，38;2;R;G;B 是 24 位色。
+			if i+2 < len(nums) && nums[i+1] == 5 {
+				return fmt.Sprintf("\x1b[38;5;%dm", nums[i+2])
+			}
+			if i+4 < len(nums) && nums[i+1] == 2 {
+				return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", nums[i+2], nums[i+3], nums[i+4])
+			}
+		}
+	}
+	return ""
+}
+
+// fgAt 返回某格的前景色，越界返回空串。
+func (s *virtualScreen) fgAt(row, col int) string {
+	if row < 0 || row >= s.height || col < 0 || col >= s.width {
+		return ""
+	}
+	return s.fg[row][col]
+}
+
+// fgRow 收集某一行出现过的前景色（去重、保持出现顺序）。
+// 断言「这一行里有几种颜色」比逐格比对稳，也更能说明问题。
+func (s *virtualScreen) fgRow(row int) []string {
+	if row < 0 || row >= s.height {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range s.fg[row] {
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+// fgLine 返回一段横向区间内出现过的前景色。
+func (s *virtualScreen) fgLine(row, from, to int) []string {
+	if row < 0 || row >= s.height {
+		return nil
+	}
+	if to > s.width {
+		to = s.width
+	}
+	var out []string
+	seen := map[string]bool{}
+	for c := from; c < to; c++ {
+		v := s.fg[row][c]
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+// hasFG 报告某行是否出现过指定前景色。
+func (s *virtualScreen) hasFG(row int, want string) bool {
+	for _, c := range s.fgRow(row) {
+		if c == want {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *virtualScreen) put(r rune) {
 	if s.row < 0 || s.row >= s.height || s.col < 0 || s.col >= s.width {
 		return
 	}
 	s.cells[s.row][s.col] = r
+	s.fg[s.row][s.col] = s.curFG
 	s.col++
 	if s.col > s.width {
 		s.col = s.width

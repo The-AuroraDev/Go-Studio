@@ -304,15 +304,15 @@ func TestGoSubtreeViaSpecKeys(t *testing.T) {
 	h.app.draw()
 
 	for _, keys := range [][]string{
-		{"ctrl+g", "r"},       // go run
-		{"ctrl+g", "b"},       // go build
-		{"ctrl+g", "t"},       // go test
-		{"ctrl+g", "v"},       // go vet
-		{"ctrl+g", "e"},       // go env
-		{"ctrl+g", "l"},       // go list
-		{"ctrl+g", "shift+v"}, // go version
-		{"ctrl+g", "meta+t"},  // go mod tidy
-		{"ctrl+g", "alt+t"},   // go mod tidy 的 alt 写法
+		{"ctrl+g", "r"},      // go run
+		{"ctrl+g", "b"},      // go build
+		{"ctrl+g", "t"},      // go test
+		{"ctrl+g", "v"},      // go vet
+		{"ctrl+g", "e"},      // go env
+		{"ctrl+g", "l"},      // go list
+		{"ctrl+g", "V"},      // go version
+		{"ctrl+g", "meta+t"}, // go mod tidy
+		{"ctrl+g", "alt+t"},  // go mod tidy 的 alt 写法
 	} {
 		h.pressAll(keys...)
 		// 这些命令尚未实现，状态栏应明确说明而不是毫无反应。

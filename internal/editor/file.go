@@ -209,6 +209,8 @@ func (a *App) saveAsPath(path string) {
 	}
 	// SaveAs 原地改了文档的 Path()，标签数组本身不用动：
 	// 标签名与去重索引都是现算的，下一次渲染就会显示新名字。
+	// 但扩展名可能跟着变（main.go 另存为 main.py），语言规则要重认。
+	a.rebuildHighlighter()
 	a.setStatus("已另存为 " + displayName(path))
 }
 

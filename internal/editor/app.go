@@ -22,6 +22,7 @@ import (
 	"github.com/29anan29/Go-Studio/internal/keymap"
 	"github.com/29anan29/Go-Studio/internal/log"
 	"github.com/29anan29/Go-Studio/internal/screen"
+	"github.com/29anan29/Go-Studio/internal/syntax"
 	"github.com/29anan29/Go-Studio/internal/view"
 )
 
@@ -47,6 +48,15 @@ type App struct {
 	// 缓存它是为了让命令处理函数写起来短；任何切换标签的操作
 	// 都必须调用 syncActive 刷新它。
 	doc *document.Document
+
+	// hl 是当前文档的语法高亮缓存，为 nil 表示不高亮。
+	// 它按文档维护：切换标签时整体重建，而不是每个标签各留一份，
+	// 那样内存会随打开的文件数一直涨。
+	hl *syntax.Highlighter
+	// hlRev 是 hl 已同步到的文档版本号，用来发现自上次绘制以来的改动。
+	hlRev uint64
+	// hlLang 是 hl 当前使用的语言名，用于在状态栏显示识别结果。
+	hlLang string
 
 	top  int
 	mode string
@@ -123,7 +133,7 @@ func New(opts Options) (*App, error) {
 		now = time.Now
 	}
 	caps := opts.Backend.Caps()
-	return &App{
+	a := &App{
 		backend: opts.Backend,
 		logger:  opts.Logger,
 		cfg:     opts.Config,
@@ -136,7 +146,11 @@ func New(opts Options) (*App, error) {
 		now:     now,
 		width:   caps.Width,
 		height:  caps.Height,
-	}, nil
+	}
+	// 启动就要有高亮：这是打开命令行参数指定的文件那条路径，
+	// 不经过 syncActive，不在这里建的话首个文件永远不高亮。
+	a.rebuildHighlighter()
+	return a, nil
 }
 
 // Run 是主循环，直到上下文取消或收到退出命令。
@@ -212,6 +226,10 @@ func (a *App) handleKey(keystroke string) {
 		return
 	}
 
+	// 记下按下这个键之前的待定前缀。Push 在不匹配时会清空前缀，
+	// 所以名字必须提前取好，事后已经取不到了。
+	pendingBefore := a.matcher.PendingSeq()
+
 	result, binding := a.matcher.Push(key)
 	switch result {
 	case keymap.ResultIgnored:
@@ -224,6 +242,15 @@ func (a *App) handleKey(keystroke string) {
 		return
 
 	case keymap.ResultUnknown:
+		// 有前缀待定时，这一下键是「想完成组合键」而不是「想输入字符」。
+		// 插进文档会造成很糟的后果：C-a 之后按 x 想撤销，
+		// 屏幕上却多出一个 x 并让文档变脏；更麻烦的是误插改变了光标位置，
+		// 后续操作继续错位，问题越滚越大。
+		// 所以这里一律丢弃，并把前缀名一起报出来，让用户知道发生了什么。
+		if pendingBefore != "" {
+			a.setStatus("「" + pendingBefore + " " + key + "」不是有效组合，已忽略")
+			return
+		}
 		if r, ok := screen.PrintableRune(key); ok {
 			a.insertRune(r)
 			return
@@ -338,6 +365,7 @@ func (a *App) draw() {
 		return
 	}
 	a.clampTop()
+	a.syncHighlighter()
 	theme := a.theme()
 
 	body := view.Render(view.Options{
@@ -351,6 +379,7 @@ func (a *App) draw() {
 		Theme:               theme,
 		CursorShape:         screen.CursorBlock,
 		CursorBlink:         true,
+		Tokens:              a.hl,
 	})
 
 	rows := make([]string, 0, a.height)
@@ -460,6 +489,7 @@ func shiftCursor(cursor *screen.CursorSpec, dy int) *screen.CursorSpec {
 // syncActive 在切换标签后刷新缓存的当前文档与视口。
 func (a *App) syncActive() {
 	a.doc = a.tabs.current()
+	a.rebuildHighlighter()
 	// 每个标签各自记一个视口起点最省事，但那样内存随标签数增长；
 	// 这里统一回到文件开头：切换时看到开头比看到上次滚动位置更可预期。
 	a.top = 0
@@ -506,4 +536,55 @@ func minInt(a, b int) int {
 // clampInt 把 v 夹到 [lo, hi]。
 func clampInt(v, lo, hi int) int {
 	return minInt(maxInt(v, lo), maxInt(lo, hi))
+}
+
+// ---- 语法高亮 ----
+
+// rebuildHighlighter 按当前文档路径与配置重建高亮缓存。
+//
+// 触发时机：打开文件、切换标签、另存为（路径变了，语言可能跟着变）、
+// 运行时改配置。重建而不是复用，是因为语言规则变了之后
+// 之前算出的 token 全部作废——同一行文本在 Go 与 Python 下完全不同。
+func (a *App) rebuildHighlighter() {
+	a.hl = nil
+	a.hlLang = ""
+	a.hlRev = 0
+	if a.doc == nil || !a.cfg.Editor.Syntax {
+		return
+	}
+	lex := a.lexerFor(a.doc.Path())
+	if lex == nil {
+		// 没有匹配到语言就是纯文本，不报错也不提示：
+		// 用户打开 .log、.txt、临时文件时不该被弹窗骚扰。
+		return
+	}
+	a.hl = syntax.NewHighlighter(a.doc, lex)
+	a.hlLang = lex.Name()
+	a.hlRev = a.doc.Revision()
+}
+
+// lexerFor 按配置与路径挑出语言规则。
+func (a *App) lexerFor(path string) syntax.Lexer {
+	if name := a.cfg.Editor.SyntaxLang; name != "" {
+		if lex := syntax.ForLanguage(name); lex != nil {
+			return lex
+		}
+		a.setStatus("未知语言：" + name + "，已按扩展名判断")
+	}
+	return syntax.ForFilename(path)
+}
+
+// syncHighlighter 让缓存跟上文档的改动。
+//
+// 挂在绘制路径上而不是各个编辑命令里，是为了不漏：插入、删除、
+// 撤销、重做、粘贴，将来新增的编辑入口，只要动了内容就会改版本号。
+// 靠版本号判断比靠命令白名单可靠。
+func (a *App) syncHighlighter() {
+	if a.hl == nil {
+		return
+	}
+	if rev := a.doc.Revision(); rev != a.hlRev {
+		a.hlRev = rev
+		a.hl.Invalidate(a.doc.DirtyFromLine())
+	}
 }

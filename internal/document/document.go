@@ -61,6 +61,11 @@ type Document struct {
 
 	path     string
 	readonly bool
+
+	// dirtyFrom 是最近一次编辑影响到的最前行号。
+	// 语法高亮缓存靠它作废：该行之后的所有 token 都不能再信，
+	// 因为一次编辑可能改变后续所有行的上下文（比如开了一个块注释）。
+	dirtyFrom int
 }
 
 // revPair 是一次变更前后的内容版本。
@@ -153,6 +158,11 @@ func (d *Document) Dirty() bool { return d.rev != d.savedRev }
 
 // Revision 返回当前内容版本号，主要供测试断言。
 func (d *Document) Revision() uint64 { return d.rev }
+
+// DirtyFromLine 返回最近一次编辑影响到的最前行号。
+//
+// 没有编辑过时为 0。撤销与重做同样经过 applyEdit，因此也会更新它。
+func (d *Document) DirtyFromLine() int { return d.dirtyFrom }
 
 // LineCount 返回总行数，空文档也算一行。
 func (d *Document) LineCount() int { return d.buf.LineCount() }

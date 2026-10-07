@@ -6,11 +6,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/29anan29/Go-Studio/internal/syntax"
+	"github.com/29anan29/Go-Studio/internal/view"
 )
 
 // allScenarios 返回全部场景。
@@ -32,6 +36,100 @@ func allScenarios() []scenario {
 		cancelPrompt(),
 		newFile(),
 		resize(),
+		quitKeys(),
+		prefixBlocksEditing(),
+		syntaxHighlighting(),
+		syntaxAcrossLanguages(),
+	}
+}
+
+// quitKeys 验证 C-a q 的两种结局。
+func quitKeys() scenario {
+	return scenario{
+		name: "退出：C-a q 与 C-a x",
+		steps: []step{
+			{name: "打开一个空文件", fn: func(e *env) error {
+				if err := e.start("demo.txt", ""); err != nil {
+					return err
+				}
+				return e.expect("demo.txt", 15*time.Second)
+			}},
+			{name: "有改动时 C-a q 拒绝退出并给出两个出口", fn: func(e *env) error {
+				e.sendSlow("abc", 60*time.Millisecond)
+				e.ctrlA()
+				e.send("q")
+				// 提示必须同时给出保存与强退，否则用户只能反复按 C-a q。
+				if err := e.expect("C-a w", 10*time.Second); err != nil {
+					return err
+				}
+				return e.expect("C-a x", 10*time.Second)
+			}},
+			{name: "程序仍然活着", fn: func(e *env) error {
+				e.quiet(200 * time.Millisecond)
+				if e.exitedNow() {
+					return errors.New("有未保存改动时不该退出")
+				}
+				return nil
+			}},
+			{name: "保存之后 C-a q 真的退出", fn: func(e *env) error {
+				e.ctrlA()
+				e.send("w")
+				if err := e.textEventually(filepath.Join(e.dir, "demo.txt"), "abc", 10*time.Second); err != nil {
+					return err
+				}
+				e.ctrlA()
+				e.send("q")
+				if err := e.waitExit(15 * time.Second); err != nil {
+					return err
+				}
+				return nil
+			}},
+			{name: "终端被完全恢复", fn: func(e *env) error {
+				return e.checkTerminalRestored()
+			}},
+		},
+	}
+}
+
+// prefixBlocksEditing 验证前缀键之后按键不会污染文档。
+func prefixBlocksEditing() scenario {
+	return scenario{
+		name: "前缀键之后不编辑文档",
+		steps: []step{
+			{name: "打开一个空文件", fn: func(e *env) error {
+				if err := e.start("demo.txt", ""); err != nil {
+					return err
+				}
+				return e.expect("demo.txt", 15*time.Second)
+			}},
+			{name: "按 C-a 前缀", fn: func(e *env) error {
+				e.ctrlA()
+				return e.expect("按键前缀", 10*time.Second)
+			}},
+			{name: "接一个不构成命令的字母，文档不变脏", fn: func(e *env) error {
+				e.send("j")
+				if err := e.expect("不是有效组合", 10*time.Second); err != nil {
+					return err
+				}
+				// 状态栏没有脏标记，说明没有任何编辑发生。
+				return e.expectGone("*")
+			}},
+			{name: "文档仍是空的（没被插入 j）", fn: func(e *env) error {
+				e.ctrlA()
+				e.send("w")
+				return e.textEventually(filepath.Join(e.dir, "demo.txt"), "", 10*time.Second)
+			}},
+			{name: "没有前缀时字母照常输入", fn: func(e *env) error {
+				e.sendSlow("j", 60*time.Millisecond)
+				if err := e.expect("1:2", 10*time.Second); err != nil {
+					return err
+				}
+				e.ctrlA()
+				e.send("w")
+				return e.textEventually(filepath.Join(e.dir, "demo.txt"), "j", 10*time.Second)
+			}},
+			{name: "退出并恢复终端", fn: func(e *env) error { return e.stop() }},
+		},
 	}
 }
 
@@ -621,6 +719,121 @@ func resize() scenario {
 					return err
 				}
 				return e.text(filepath.Join(e.dir, "demo.txt"), "resize testok")
+			}},
+			{name: "退出并恢复终端", fn: func(e *env) error { return e.stop() }},
+		},
+	}
+}
+
+// ---- 场景 16：Go 语法高亮 ----
+
+// syntaxHighlighting 验证 Go 文件按扩展名识别并着色。
+//
+// 断言方式是把颜色当成一等信息：光看字符，
+// 关键字和普通标识符长得一模一样，区别只在颜色上。
+func syntaxHighlighting() scenario {
+	return scenario{
+		name: "语法高亮：Go 文件按扩展名识别",
+		steps: []step{
+			{name: "打开一个 .go 文件", fn: func(e *env) error {
+				if err := e.start("main.go", "package main\n\nfunc main() {\n\tx := 1 // 计数\n}\n"); err != nil {
+					return err
+				}
+				// 状态栏显示识别到的语言，这是用户排查高亮问题的第一手线索。
+				return e.expect("Go", 15*time.Second)
+			}},
+			{name: "关键字上了关键字色", fn: func(e *env) error {
+				return e.expectFG(0, view.SyntaxTheme().Syntax[syntax.KindKeyword])
+			}},
+			{name: "注释单独一种颜色", fn: func(e *env) error {
+				return e.expectFG(3, view.SyntaxTheme().Syntax[syntax.KindComment])
+			}},
+			{name: "数字单独一种颜色", fn: func(e *env) error {
+				return e.expectFG(3, view.SyntaxTheme().Syntax[syntax.KindNumber])
+			}},
+			{name: "编辑后颜色跟着更新：开一个块注释", fn: func(e *env) error {
+				// 跨行块注释一开，下面每一行都得变成注释色。
+				// 缓存没跟着作废的话，这里会立刻露馅。
+				e.ctrlHome()
+				e.sendSlow("/*", 80*time.Millisecond)
+				return e.expectFG(4, view.SyntaxTheme().Syntax[syntax.KindComment])
+			}},
+			{name: "撤销后颜色恢复", fn: func(e *env) error {
+				e.ctrlA()
+				e.send("r")
+				e.quiet(700 * time.Millisecond)
+				// 只查最后一行：文件里本来就有一行 // 行注释，
+				// 全屏否定会误伤，能说明问题的只有刚编辑的那一行。
+				return e.expectNoFGRow(4, view.SyntaxTheme().Syntax[syntax.KindComment])
+			}},
+			{name: "退出并恢复终端", fn: func(e *env) error { return e.stop() }},
+		},
+	}
+}
+
+// ---- 场景 17：高亮不是 Go 专属 ----
+
+// syntaxAcrossLanguages 验证同一份实现能服务多门语言。
+//
+// 这一条是「编辑器针对 Go 优化，但不是只能写 Go」的直接证据：
+// 换扩展名就应该换语言，不该要求用户改配置。
+func syntaxAcrossLanguages() scenario {
+	return scenario{
+		name: "语法高亮：不只是 Go",
+		steps: []step{
+			{name: "打开 Python 文件，状态栏报 Python", fn: func(e *env) error {
+				if err := e.start("app.py", "def f(x):\n    return \"hi\"  # 注释\n"); err != nil {
+					return err
+				}
+				return e.expect("Python", 15*time.Second)
+			}},
+			{name: "def 上了关键字色", fn: func(e *env) error {
+				return e.expectFG(0, view.SyntaxTheme().Syntax[syntax.KindKeyword])
+			}},
+			{name: "字符串上了字符串色", fn: func(e *env) error {
+				return e.expectFG(1, view.SyntaxTheme().Syntax[syntax.KindString])
+			}},
+			{name: "Shell 脚本按 .sh 识别", fn: func(e *env) error {
+				e.ctrlA()
+				e.send("q")
+				e.quiet(400 * time.Millisecond)
+				if err := e.start("run.sh", "#!/bin/bash\nif [ -f x ]; then\n  echo \"$HOME\"\nfi\n"); err != nil {
+					return err
+				}
+				return e.expect("Shell", 15*time.Second)
+			}},
+			{name: "shebang 是预处理色，变量是常量色", fn: func(e *env) error {
+				if err := e.expectFG(0, view.SyntaxTheme().Syntax[syntax.KindPreproc]); err != nil {
+					return err
+				}
+				return e.expectFG(2, view.SyntaxTheme().Syntax[syntax.KindConstant])
+			}},
+			{name: "Markdown 按 .md 识别", fn: func(e *env) error {
+				e.ctrlA()
+				e.send("q")
+				e.quiet(400 * time.Millisecond)
+				if err := e.start("README.md", "# 标题\n\n正文 `code` 与 **粗体**\n"); err != nil {
+					return err
+				}
+				return e.expect("Markdown", 15*time.Second)
+			}},
+			{name: "标题与行内代码着色不同", fn: func(e *env) error {
+				if err := e.expectFG(0, view.SyntaxTheme().Syntax[syntax.KindKeyword]); err != nil {
+					return err
+				}
+				return e.expectFG(2, view.SyntaxTheme().Syntax[syntax.KindString])
+			}},
+			{name: "认不出的扩展名就是纯文本，不报错", fn: func(e *env) error {
+				e.ctrlA()
+				e.send("q")
+				e.quiet(400 * time.Millisecond)
+				if err := e.start("server.log", "GET / 200\n"); err != nil {
+					return err
+				}
+				return e.expect("server.log", 15*time.Second)
+			}},
+			{name: "纯文本区没有语法色", fn: func(e *env) error {
+				return e.expectNoFG(view.SyntaxTheme().Syntax[syntax.KindKeyword])
 			}},
 			{name: "退出并恢复终端", fn: func(e *env) error { return e.stop() }},
 		},

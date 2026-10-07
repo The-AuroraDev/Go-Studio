@@ -49,6 +49,12 @@ type Editor struct {
 	LineNumbers bool `toml:"line_numbers"`
 	// RelativeLineNumbers 为真时当前行显示相对行号。
 	RelativeLineNumbers bool `toml:"relative_line_numbers"`
+	// Syntax 为真时按文件类型做语法高亮。
+	Syntax bool `toml:"syntax"`
+	// SyntaxLang 强制指定语言名（如 "Go"、"Python"），空串表示按扩展名自动判断。
+	// 自动判断对大部分文件够用，但无扩展名的文件（Makefile、Dockerfile）会落空，
+	// 这时手写一个名字最省事。
+	SyntaxLang string `toml:"syntax_lang"`
 }
 
 // UI 是外观与渲染设置。
@@ -204,6 +210,11 @@ func merge(base, overlay Config) Config {
 	}
 	if overlay.Editor.RelativeLineNumbers {
 		base.Editor.RelativeLineNumbers = true
+	}
+	// syntax 允许显式关掉：合并时只有 overlay 写了才覆盖，
+	// 否则用户配置里的一行 syntax = false 会被默认值吃掉。
+	if overlay.Editor.SyntaxLang != "" {
+		base.Editor.SyntaxLang = overlay.Editor.SyntaxLang
 	}
 
 	if overlay.UI.Theme != "" {

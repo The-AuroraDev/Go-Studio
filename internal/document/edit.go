@@ -14,6 +14,9 @@ import (
 // removed 是要删除的字节数，inserted 是插入的内容，语义与 buffer.Replace 一致。
 func (d *Document) applyEdit(offset, removed int, inserted []byte) {
 	before := d.rev
+	// 必须在替换之前问出行号：插入换行后行号会整体平移。
+	line, _ := d.buf.LineCol(offset)
+	d.dirtyFrom = line
 	removedText := d.buf.Replace(offset, removed, inserted)
 	merged := d.undo.Push(buffer.Change{
 		Offset:   offset,

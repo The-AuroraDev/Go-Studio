@@ -23,6 +23,21 @@ help: ## 列出可用目标
 build: ## 编译二进制
 	$(GO) build -o $(BINARY) ./cmd/go-studio
 
+.PHONY: build-release
+build-release: ## 编译带版本号的发布二进制
+	@# 版本取自形如 v0.0.3 的 git tag。仓库里还没有这种 tag 时退回
+	@# 默认的 0.0.1-dev —— 而不是 git 描述出的提交哈希，
+	@# 因为哈希不是版本号，报给用户也没有意义。
+	@VERSION="$$(git describe --tags --match 'v[0-9]*' --always 2>/dev/null || true)"; \
+	case "$$VERSION" in \
+	  v[0-9]*) ;; \
+	  *) VERSION=0.0.1-dev ;; \
+	esac; \
+	case "$$VERSION" in *-dirty) VERSION="$${VERSION%-dirty}-dirty";; esac; \
+	echo "构建版本 $$VERSION"; \
+	$(GO) build -trimpath -ldflags "-X main.version=$$VERSION" -o $(BINARY) ./cmd/go-studio
+	./$(BINARY) -version
+
 .PHONY: run
 run: ## 运行（需要真实终端）
 	$(GO) run ./cmd/go-studio
@@ -38,6 +53,10 @@ e2e: ## 完整使用测试：在伪终端里把编辑器当真人用一遍（约
 .PHONY: e2e-list
 e2e-list: ## 列出完整使用测试的所有场景
 	./scripts/e2e.sh -list
+
+.PHONY: keys
+keys: ## 从键位表重新生成 docs/keybindings.md
+	$(GO) run ./scripts/keys
 
 .PHONY: test-deep
 test-deep: ## 运行深度属性测试（较慢，如缓冲 10 万次随机编辑）

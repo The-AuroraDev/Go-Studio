@@ -31,7 +31,10 @@
 - 内置终端(C-a t 底部出现一行可以输入的地方，可以输入终端指令如ls,go run。输出结果单独标签页展示)
 
 ### 4. Go 相关但内建的部分
-- Go 语法高亮
+- 语法高亮（Go 支持得最细：导出名、字段、结构体标签都能区分；
+  另含 C/C++/Java/Kotlin/Swift/Rust/JavaScript/TypeScript/Python/Shell/
+  Lua/Perl/JSON/TOML/YAML/INI/Markdown/HTML/SQL/CSS 等常见语言，
+  按扩展名或文件名自动识别）
 - Go 代码片段，如 `func`、`if err != nil`、`for range`
 - 基础缩进规则
 - 基础括号匹配

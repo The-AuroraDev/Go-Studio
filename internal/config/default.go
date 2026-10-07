@@ -3,7 +3,7 @@
 
 package config
 
-// defaultTOML 是配置默认值。字段一��保持与 Config 结构体一一对应，
+// defaultTOML 是配置默认值。字段一一保持与 Config 结构体一一对应，
 // 改结构体时必须同步改这里，否则测试会失败。
 const defaultTOML = `
 [general]
@@ -18,6 +18,9 @@ tab_width = 4
 soft_wrap = false
 line_numbers = true
 relative_line_numbers = false
+# 语法高亮。按扩展名自动判断语言，无扩展名的文件可用 syntax_lang 手写。
+syntax = true
+syntax_lang = ""
 
 [ui]
 theme = "go-studio-dark"

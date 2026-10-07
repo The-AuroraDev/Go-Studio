@@ -19,6 +19,7 @@ import (
 
 	"github.com/29anan29/Go-Studio/internal/document"
 	"github.com/29anan29/Go-Studio/internal/screen"
+	"github.com/29anan29/Go-Studio/internal/syntax"
 )
 
 // Theme 集中定义配色。零值是一个可用的中性主题。
@@ -35,6 +36,61 @@ type Theme struct {
 	Text string
 	// Cursor 是插入光标的反显块。
 	Cursor string
+	// Syntax 是各类 token 的前景色，下标即 syntax.Kind。
+	// 用数组而不是 map：每帧要查很多次，数组省掉哈希与分配。
+	// 留空的种类回落到 Text，因此关掉配色只要整张表置空即可。
+	Syntax [syntax.KindCount]string
+}
+
+// tokensOf 安全地取某一行的 token。opts.Tokens 可能是 nil 接口，
+// 直接调方法会 panic，而渲染路径不该为「没开高亮」这种常态崩掉。
+func (o Options) tokensOf(line int) []syntax.Token {
+	if o.Tokens == nil {
+		return nil
+	}
+	return o.Tokens.Tokens(line)
+}
+
+// syntaxColor 返回某类 token 的前景色，未配置时回落到普通文本色。
+//
+// 必须检查 Kind 是否越界。token 来自高亮器，属于外部数据：
+// 一个越界的 Kind 会让数组索引 panic，而 panic 发生在渲染路径上，
+// 后果是整个编辑器白屏，连纯文本都看不到。
+func (t Theme) syntaxColor(kind syntax.Kind) string {
+	if int(kind) >= 0 && int(kind) < len(t.Syntax) {
+		if c := t.Syntax[kind]; c != noColor {
+			return c
+		}
+	}
+	return t.Text
+}
+
+// SyntaxTheme 返回带语法配色的深色主题。
+//
+// 每一种 token 都有各自可辨的颜色：既然切分器花力气把「字段」与
+// 「普通标识符」分开，渲染层就不能给它们同一个颜色，否则那一层的
+// 工作白做了。标点与普通文本则故意留空——满屏括号都有颜色只会更累眼。
+func SyntaxTheme() Theme {
+	t := DefaultTheme()
+	t.Syntax = [syntax.KindCount]string{
+		syntax.KindComment:     "\x1b[38;5;243m",
+		syntax.KindString:      "\x1b[38;5;114m",
+		syntax.KindEscape:      "\x1b[38;5;150m",
+		syntax.KindNumber:      "\x1b[38;5;215m",
+		syntax.KindKeyword:     "\x1b[38;5;176m",
+		syntax.KindKeywordType: "\x1b[38;5;80m",
+		syntax.KindBuiltin:     "\x1b[38;5;74m",
+		syntax.KindFunction:    "\x1b[38;5;111m",
+		syntax.KindType:        "\x1b[38;5;222m",
+		syntax.KindField:       "\x1b[38;5;137m",
+		syntax.KindConstant:    "\x1b[38;5;94m",
+		syntax.KindOperator:    "\x1b[38;5;250m",
+		syntax.KindPunct:       noColor,
+		syntax.KindPreproc:     "\x1b[38;5;140m",
+		syntax.KindLabel:       "\x1b[38;5;172m",
+		syntax.KindInvalid:     "\x1b[1;38;5;203m",
+	}
+	return t
 }
 
 // noColor 是关闭配色时使用的空序列。
@@ -99,6 +155,16 @@ type Options struct {
 	CursorShape CursorShape
 	// CursorBlink 控制光标闪烁。
 	CursorBlink bool
+	// Tokens 按行提供语法 token，为 nil 时不高亮。
+	// 只在需要时才问某一行：渲染层取可见行的 token，
+	// 取不到就退回无色文本，代价只是少了高亮，不会出错。
+	Tokens TokenSource
+}
+
+// TokenSource 是渲染层取语法 token 的接口。
+// *syntax.Highlighter 直接满足它。
+type TokenSource interface {
+	Tokens(line int) []syntax.Token
 }
 
 // Frame 是一帧渲染的结果。
@@ -191,7 +257,9 @@ func Render(opts Options) Frame {
 		}
 
 		textX := x
-		body, cursorCellX := renderLine(doc, line, cursor, isCurrent, opts.Width-textX, tabWidth, theme)
+		body, cursorCellX := renderLine(
+			doc, line, cursor, isCurrent, opts.Width-textX, tabWidth, theme, opts.tokensOf(line),
+		)
 		b.WriteString(body)
 		if isCurrent && cursorCellX >= 0 {
 			cursorPos = &screen.CursorSpec{
@@ -212,6 +280,9 @@ func Render(opts Options) Frame {
 
 // renderLine 渲染一行的文本部分，返回文本与光标在本行内的 x。
 // 光标不在可视范围内时返回的 x 为 -1。
+// tokens 是该行的语法 token，可以为 nil（不高亮）。
+// 颜色按 token 成段写入，不是每字符写一次：ANSI 转义序列有 5 个字节，
+// 逐字符写会让一行的输出膨胀三倍。
 func renderLine(
 	doc *document.Document,
 	line int,
@@ -220,6 +291,7 @@ func renderLine(
 	avail int,
 	tabWidth int,
 	theme Theme,
+	tokens []syntax.Token,
 ) (string, int) {
 	if avail <= 0 {
 		return "", -1
@@ -229,6 +301,12 @@ func renderLine(
 	var b strings.Builder
 	x := 0
 	cursorX := -1
+
+	// ti 指向覆盖当前位置的 token，用单调指针推进。
+	// 没有 token 覆盖的位置按普通文本处理：syntax.KindText 会映射回 theme.Text。
+	ti := 0
+	lastColor := noColor
+	colored := false
 
 	for i := 0; i < len(text); i++ {
 		r := text[i]
@@ -241,23 +319,38 @@ func renderLine(
 
 		if isCurrent && i == cursor.Col {
 			cursorX = x
+			if lastColor != noColor {
+				b.WriteString(reset)
+			}
 			b.WriteString(theme.Cursor)
 			// 制表符在光标下也必须展开：光标框住的是一个真实空格，
 			// 直接把制表符字节写进帧里会破坏整行的列对齐。
 			b.WriteString(expandedRune(r, w))
 			b.WriteString(reset)
+			// 复位之后终端不再带任何样式，下一个字符必须重新写自己的颜色。
+			lastColor = noColor
+			colored = false
 			x += w
 			continue
+		}
+
+		color := theme.Text
+		for ti < len(tokens) && tokens[ti].End <= i {
+			ti++
+		}
+		if ti < len(tokens) && tokens[ti].Start <= i {
+			color = theme.syntaxColor(tokens[ti].Kind)
+		}
+		if color != lastColor {
+			b.WriteString(color)
+			lastColor = color
+			colored = color != noColor
 		}
 
 		if r == '\t' {
 			b.WriteString(strings.Repeat(" ", w))
 		} else {
-			b.WriteString(theme.Text)
 			b.WriteString(string(r))
-			if theme.Text != noColor {
-				b.WriteString(reset)
-			}
 		}
 		x += w
 	}
@@ -266,6 +359,10 @@ func renderLine(
 		// 光标停在行尾之外一格：文档以换行结尾时末行是空行，
 		// 光标就落在补出来的空白上。
 		cursorX = x
+	}
+
+	if colored {
+		b.WriteString(reset)
 	}
 
 	// 行尾用空格补满，避免终端残留上一帧的残影。

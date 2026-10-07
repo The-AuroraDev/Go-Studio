@@ -455,6 +455,71 @@ func (e *env) screenText() *virtualScreen {
 	return &clone
 }
 
+// expectFG 等待第 row 行出现指定前景色。
+//
+// 用来断言语法高亮：字符本身看不出高亮，颜色才是唯一可观察的信号。
+// fg 为空串说明该 kind 在当前主题里没配色，直接判成功。
+func (e *env) expectFG(row int, fg string) error {
+	fg = normalizeFG(fg)
+	if fg == "" {
+		return nil
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s := e.screenText()
+		if s.hasFG(row, fg) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("第 %d 行未出现颜色 %q\n当前屏幕:\n%s\n该行用到的颜色: %q",
+				row, fg, s, s.fgRow(row))
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+}
+
+// expectNoFG 断言整屏都没有出现指定前景色。
+// 用于「纯文本不该有语法色」这类否定断言。
+func (e *env) expectNoFG(fg string) error {
+	fg = normalizeFG(fg)
+	if fg == "" {
+		return nil
+	}
+	// 留一点余量：断言要发生在绘制完成之后。
+	e.quiet(500 * time.Millisecond)
+	s := e.screenText()
+	for row := 0; row < s.height; row++ {
+		if s.hasFG(row, fg) {
+			return fmt.Errorf("第 %d 行不该出现颜色 %q，却出现了\n当前屏幕:\n%s", row, fg, s)
+		}
+	}
+	return nil
+}
+
+// expectNoFGRow 断言第 row 行没有出现指定前景色。
+//
+// 与 expectNoFG 的区别是范围：整屏否定常常过强。
+// 比如文件里本来就有一行行注释，全屏都该有注释色，
+// 这时能说明问题的只有「我刚编辑的那一行还有没有」。
+func (e *env) expectNoFGRow(row int, fg string) error {
+	fg = normalizeFG(fg)
+	if fg == "" {
+		return nil
+	}
+	e.quiet(400 * time.Millisecond)
+	s := e.screenText()
+	if s.hasFG(row, fg) {
+		return fmt.Errorf("第 %d 行不该出现颜色 %q，却出现了\n当前屏幕:\n%s\n该行用到的颜色: %q",
+			row, fg, s, s.fgRow(row))
+	}
+	return nil
+}
+
+// ctrlHome 回到文档开头，用于把光标准备到已知位置。
+func (e *env) ctrlHome() {
+	e.chord("ctrl+home")
+}
+
 // expectLine 等待第 row 行（从 0 开始）的内容等于 want。
 // 用于验证结构性的位置关系，比如「第 3 行显示的就是文档第 3 行」。
 func (e *env) expectLine(row int, want string, timeout time.Duration) error {
@@ -607,6 +672,25 @@ func (e *env) resize(cols, rows int) error {
 	e.mu.Unlock()
 	e.quiet(500 * time.Millisecond)
 	return nil
+}
+
+// exitedNow 报告进程是否已经退出。
+func (e *env) exitedNow() bool {
+	return e.cmd.ProcessState != nil && e.cmd.ProcessState.Exited()
+}
+
+// waitExit 等进程退出并回收。
+func (e *env) waitExit(timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() { done <- e.cmd.Wait() }()
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		_ = e.cmd.Process.Kill()
+		<-done
+		return fmt.Errorf("编辑器未在 %s 内退出", timeout)
+	}
 }
 
 // close 收尾：确保进程被杀掉、伪终端被关掉。

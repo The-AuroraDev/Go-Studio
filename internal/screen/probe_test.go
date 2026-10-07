@@ -19,6 +19,10 @@ import (
 // 猜是猜不准的——每种终端对 Ctrl+End 之类的编码都不一样。
 //
 // 运行：go test -v -run TestProbeSequences ./internal/screen/
+//
+// 注意 CSI 1;5S 这样的序列在传统 xterm 里与 F4 撞车，
+// Ctrl+Shift+字母根本无法可靠编码——这正是 C-S c / C-S v 需要
+// kitty 键盘协议的原因，所以它没有被列进探测表。
 func TestProbeSequences(t *testing.T) {
 	cases := []struct{ name, seq string }{
 		{"Enter", "\r"},
@@ -48,6 +52,9 @@ func TestProbeSequences(t *testing.T) {
 		{"Ctrl+A", "\x01"},
 		{"Ctrl+Space(NUL)", "\x00"},
 		{"Alt+a(ESC a)", "\x1ba"},
+		{"Shift+S(大写字母)", "S"},
+		{"Shift+A(大写字母)", "A"},
+		{"Shift+End", "\x1b[1;2F"},
 	}
 
 	for _, tc := range cases {
@@ -81,6 +88,10 @@ func TestProbeSequencesStable(t *testing.T) {
 		{"Ctrl+A", "\x01", "ctrl+a"},
 		{"Alt 用 ESC 前缀", "\x1b1", "alt+1"},
 		{"回车", "\r", "<enter>"},
+		// 大写字母：Shift 被吸收进字符本身，键位表里要写字母而不是 shift+字母。
+		{"大写字母 S 就是 S", "S", "S"},
+		{"大写字母 A 就是 A", "A", "A"},
+		{"小写字母仍是小写", "s", "s"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

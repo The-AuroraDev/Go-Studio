@@ -561,3 +561,136 @@ func TestCancelPrefixCommand(t *testing.T) {
 		t.Errorf("取消后仍有待定前缀: %v", pending)
 	}
 }
+
+// ---- 前缀键之后禁止编辑 ----
+
+// TestPrefixBlocksEditing 是本项目一条关键交互约定：
+// 按下前缀键之后，随后的按键是在「想完成组合键」，不是在「想输入字符」。
+// 若把它插进文档，C-a 之后误按一个键就会污染文件、让文档变脏，
+// 而且光标位置一变，后续操作继续错位。
+func TestPrefixBlocksEditing(t *testing.T) {
+	cases := []struct {
+		name     string
+		prefixes []string
+		next     string
+	}{
+		{"C-a 之后按字母", []string{"ctrl+a"}, "j"},
+		{"C-g 之后按字母", []string{"ctrl+g"}, "q"},
+		{"C-a 之后按空格", []string{"ctrl+a"}, "space"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "abc")
+			h.app.draw()
+
+			for _, key := range tc.prefixes {
+				h.press(key)
+			}
+			before := string(h.doc().Text())
+			cursorBefore := h.doc().Cursor()
+
+			h.press(tc.next)
+
+			if got := string(h.doc().Text()); got != before {
+				t.Errorf("前缀之后按 %q 把文档改成了 %q（应该是 %q）",
+					tc.next, got, before)
+			}
+			if h.doc().Cursor() != cursorBefore {
+				t.Errorf("前缀之后按 %q 移动了光标: %+v -> %+v",
+					tc.next, cursorBefore, h.doc().Cursor())
+			}
+			if h.doc().Dirty() {
+				t.Errorf("前缀之后按 %q 让文档变脏了", tc.next)
+			}
+		})
+	}
+}
+
+// TestPrefixFailureIsExplained 丢弃按键必须给出说明，
+// 否则用户会以为编辑器吞了输入。
+func TestPrefixFailureIsExplained(t *testing.T) {
+	h := newHarness(t, "abc")
+	h.app.draw()
+	h.press("ctrl+a")
+	// j 是没被绑到任何命令上的字母，用它来验证「不认识的键」这条路径。
+	h.press("j")
+
+	status := h.app.currentStatus()
+	if !strings.Contains(status, "不是有效组合") {
+		t.Errorf("状态栏 = %q, want 说明不是有效组合", status)
+	}
+	// 提示里要带上前缀名，用户才知道自己刚才按了什么。
+	if !strings.Contains(status, "ctrl+a") {
+		t.Errorf("状态栏 = %q, want 提到前缀名", status)
+	}
+	// 丢弃之后前缀已经清空，可以正常继续输入。
+	if pending := h.app.matcher.Pending(); len(pending) != 0 {
+		t.Errorf("丢弃后仍有待定前缀: %v", pending)
+	}
+	// 光标还在行首，所以输入插在前面。
+	h.press("k")
+	if got := string(h.doc().Text()); got != "kabc" {
+		t.Errorf("丢弃之后应能正常输入，得到 %q, want %q", got, "kabc")
+	}
+}
+
+// TestPlainLetterStillTypes 没有前缀时，未绑定的字母必须照常插入。
+// 这条与上一条互为反面：前缀之后禁止输入，但不能因此把所有字母都禁掉。
+func TestPlainLetterStillTypes(t *testing.T) {
+	h := newHarness(t, "")
+	h.app.draw()
+	h.pressAll("h", "i")
+
+	if got := string(h.doc().Text()); got != "hi" {
+		t.Errorf("内容 = %q, want %q", got, "hi")
+	}
+	if !h.doc().Dirty() {
+		t.Error("输入后文档应变脏")
+	}
+}
+
+// ---- 退出 ----
+
+func TestQuitKeyExitsWhenClean(t *testing.T) {
+	h := newHarness(t, "abc")
+	h.app.draw()
+
+	h.pressAll("ctrl+a", "q")
+
+	if !h.app.shouldQuit {
+		t.Error("没有未保存改动时 C-a q 应该退出")
+	}
+}
+
+// TestQuitRefusesWhenDirty 有未保存改动时不能退出，
+// 而且必须把两个出口都说清楚。
+func TestQuitRefusesWhenDirty(t *testing.T) {
+	h := newHarness(t, "abc")
+	h.app.draw()
+	h.press("x")
+
+	h.pressAll("ctrl+a", "q")
+
+	if h.app.shouldQuit {
+		t.Fatal("有未保存改动时不该退出")
+	}
+	status := h.app.currentStatus()
+	for _, want := range []string{"C-a w", "C-a x"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("状态栏 = %q, want 提到 %q（用户要知道下一步该按什么）", status, want)
+		}
+	}
+}
+
+// TestForceQuitExitsWithDirtyChanges 强制退出会真的退出。
+func TestForceQuitExitsWithDirtyChanges(t *testing.T) {
+	h := newHarness(t, "abc")
+	h.app.draw()
+	h.press("x")
+
+	h.pressAll("ctrl+a", "x")
+
+	if !h.app.shouldQuit {
+		t.Error("C-a x 应该强制退出")
+	}
+}

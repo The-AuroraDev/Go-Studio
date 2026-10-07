@@ -6,6 +6,8 @@ package keymap
 import (
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/29anan29/Go-Studio/internal/screen"
 )
@@ -72,7 +74,7 @@ func TestEmacsTableMatchesSpec(t *testing.T) {
 		{"ctrl+g v", CmdGoVet, ""},
 		{"ctrl+g e", CmdGoEnv, ""},
 		{"ctrl+g l", CmdGoList, ""},
-		{"ctrl+g shift+v", CmdGoVersion, ""},
+		{"ctrl+g V", CmdGoVersion, ""},
 		// spec 写的 C-g-m t / C-g-m d，理解为 C-g 之后按 M-t / M-d。
 		// meta 与 alt 都绑：传统终端把两者一并以 ESC 前缀发送。
 		{"ctrl+g meta+t", CmdGoModTidy, ""},
@@ -108,7 +110,7 @@ func TestEmacsResolvesVimKeyConflict(t *testing.T) {
 		t.Fatalf("Emacs() 返回错误: %v", err)
 	}
 	vet, _ := table.Lookup("ctrl+g v")
-	version, _ := table.Lookup("ctrl+g shift+v")
+	version, _ := table.Lookup("ctrl+g V")
 	if vet.Cmd != CmdGoVet {
 		t.Errorf("C-g v = %q, want %q", vet.Cmd, CmdGoVet)
 	}
@@ -277,7 +279,7 @@ func TestLookupRejectsUnknownKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Emacs() 返回错误: %v", err)
 	}
-	for _, seq := range []string{"ctrl+q", "F13", "ctrl+a ctrl+a r", "<f13>"} {
+	for _, seq := range []string{"ctrl+q ctrl+q", "F13", "ctrl+a ctrl+a r", "<f13>"} {
 		if _, ok := table.Lookup(seq); ok {
 			t.Errorf("Lookup(%q) 竟然命中了", seq)
 		}
@@ -412,6 +414,42 @@ func TestCommonWordsRemainTypeable(t *testing.T) {
 				t.Errorf("字母 %q（出现在 %q 里）被命令 %q 占用，打不出来",
 					ch, word, cmd)
 			}
+		}
+	}
+}
+
+// TestNoUnreachableShiftLetterBinding 堵住一类「按了永远没反应」的绑定。
+//
+// 终端对「Shift + 可打印字母」不上报 shift 修饰，而是把 Shift 吸收进字符本身：
+// 按 Shift+S 的按键名是 "S"，不是 "shift+s"。
+// 因此任何形如 shift+<单个可打印字符>（且没有 ctrl/alt/meta 同时存在）的
+// 序列都不可能被终端产生，这类绑定等于凭空写上去的。
+//
+// 带 ctrl 的不受影响：Ctrl+Shift+S 的按键名确实是 "ctrl+shift+s"。
+func TestNoUnreachableShiftLetterBinding(t *testing.T) {
+	table, err := Emacs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range table.Bindings() {
+		for _, token := range strings.Fields(binding.Keys) {
+			if !strings.HasPrefix(token, "shift+") {
+				continue
+			}
+			base := strings.TrimPrefix(token, "shift+")
+			// 带其它修饰键时终端确实会保留 shift，这条例外。
+			if strings.Contains(base, "+") {
+				continue
+			}
+			if screen.IsNamedKey(token) {
+				continue // shift+<up> 这类命名键是真实的
+			}
+			r, size := utf8.DecodeRuneInString(base)
+			if size != len(base) || !unicode.IsPrint(r) {
+				continue
+			}
+			t.Errorf("按键序列 %q 里的 %q 永远不会被终端上报：Shift+字母的按键名就是字母本身",
+				binding.Keys, token)
 		}
 	}
 }
